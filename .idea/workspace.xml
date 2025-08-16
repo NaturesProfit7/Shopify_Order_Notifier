@@ -4,10 +4,13 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="Modify requirements.txt">
-      <change afterPath="$PROJECT_DIR$/app/state.py" afterDir="false" />
+    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="Naive idempotency in memory">
+      <change afterPath="$PROJECT_DIR$/app/services/phone_utils.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/services/vcf_service.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/test.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/tg_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/tg_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/test_webhook.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/test_webhook.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -79,11 +82,20 @@
       <option name="project" value="LOCAL" />
       <updated>1754775352531</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="Naive idempotency in memory">
+      <option name="closed" value="true" />
+      <created>1755288735631</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1755288735631</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Modify requirements.txt" />
-    <option name="LAST_COMMIT_MESSAGE" value="Modify requirements.txt" />
+    <MESSAGE value="Naive idempotency in memory" />
+    <option name="LAST_COMMIT_MESSAGE" value="Naive idempotency in memory" />
   </component>
 </project>
