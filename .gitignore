@@ -27,7 +27,7 @@ env/
 env.bak/
 venv.bak/
 .env
-.env.*
+.env
 *.env
 .python-version
 
