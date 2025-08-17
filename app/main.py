@@ -8,6 +8,9 @@ from app.services.phone_utils import normalize_ua_phone, pretty_ua_phone
 from app.services.vcf_service import build_contact_vcf
 from app.services.tg_service import send_text, send_file
 
+from app.services.pdf_service import build_order_pdf
+
+
 import logging, json as _json, time
 logger = logging.getLogger("app")
 logging.basicConfig(level=logging.INFO)
@@ -38,15 +41,31 @@ def _extract_customer_name(order: dict) -> tuple[str, str]:
     return first, last
 
 def _extract_phone(order: dict) -> str:
+    """
+    Пытаемся вытащить номер из всех типичных мест Shopify:
+    1) customer.phone
+    2) order.phone               <-- добавили
+    3) customer.default_address.phone
+    4) shipping_address.phone
+    5) billing_address.phone
+    Возвращаем первую непустую строку .strip().
+    """
     cust = (order.get("customer") or {})
+    default_addr = (cust.get("default_address") or {})
     ship = (order.get("shipping_address") or {})
     bill = (order.get("billing_address") or {})
-    return (
-        (cust.get("phone") or "")
-        or (ship.get("phone") or "")
-        or (bill.get("phone") or "")
-        or ""
-    )
+
+    for v in (
+        cust.get("phone"),
+        order.get("phone"),               # <-- НОВОЕ
+        default_addr.get("phone"),
+        ship.get("phone"),
+        bill.get("phone"),
+    ):
+        if v and str(v).strip():
+            return str(v).strip()
+    return ""
+
 
 @app.get("/health")
 def health():
@@ -57,7 +76,7 @@ async def shopify_webhook(request: Request):
     # 1) Сырые байты тела (для HMAC)
     raw_body = await request.body()
 
-    # 2) Валидация подписи Shopify (оставь как у тебя реализовано)
+    # 2) Валидация подписи Shopify
     hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
     secret = get_shopify_webhook_secret()
     digest = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).digest()
@@ -65,67 +84,81 @@ async def shopify_webhook(request: Request):
     if not hmac.compare_digest(computed_hmac, hmac_header or ""):
         raise HTTPException(status_code=403, detail="Invalid HMAC signature")
 
-    # 3) Парсим JSON (уже после HMAC, чтобы не трогать raw_body до проверки)
+    # 3) Парсим JSON
     try:
         event = json.loads(raw_body)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    # 4) Достаём order_id (для orders/create это обычно event['id'])
+    # 4) order_id
     order_id = event.get("id") or event.get("order_id")
     if order_id is None:
         raise HTTPException(status_code=400, detail="order_id is missing in event")
 
-    # 5) Идемпотентность: если уже обрабатывали — выходим
+    # 5) Идемпотентность
     if await is_processed(order_id):
-        # Можно залогировать duplicate, но для простоты ответим явно
         return {"status": "duplicate", "order_id": str(order_id)}
 
     # 6) Помечаем как обработанный
     await mark_processed(order_id)
 
-    # (а) Извлекаем ФИО и телефон из payload
+    # ---------- Сообщение №1: PDF ----------
+    try:
+        pdf_bytes, pdf_filename = build_order_pdf(event)
+        first_name, last_name = _extract_customer_name(event)
+        pdf_caption = f"Замовлення #{event.get('order_number') or event.get('id')} • {(first_name + ' ' + last_name).strip()}".strip()
+
+        for attempt in range(1, 4):
+            try:
+                send_file(pdf_bytes, pdf_filename, caption=pdf_caption)
+                log_event("pdf_sent", order_id=str(order_id), status="ok", attempt=attempt)
+                break
+            except Exception as e:
+                log_event("pdf_sent", order_id=str(order_id), status="error", attempt=attempt, error=str(e))
+                if attempt < 3:
+                    time.sleep(30)
+                else:
+                    raise
+    except Exception as e:
+        # если PDF не ушёл после 3 попыток — ломаем обработку
+        raise
+
+    # ---------- Сообщение №2: VCF ----------
     first_name, last_name = _extract_customer_name(event)
     phone_raw = _extract_phone(event)
-
-    # (б) Нормализуем в E.164 (+380XXXXXXXXX)
+    log_event("phone_extracted", order_id=str(order_id), phone_raw=phone_raw)  # <— добавили лог
     phone_e164 = normalize_ua_phone(phone_raw)
 
-    # (в) Генерируем vCard (bytes, filename)
     vcf_bytes, vcf_filename = build_contact_vcf(
         first_name=first_name,
         last_name=last_name,
         order_id=str(order_id),
         phone_e164=phone_e164,
-        embed_order_in_n=True  # можно опустить — по умолчанию включено
+        embed_order_in_n=True,
     )
 
-    # (г) Подпись к файлу: красивый номер, если удалось распознать
     caption = "Контакт клієнта (vCard)"
     if phone_e164:
         caption += f"\n{pretty_ua_phone(phone_e164)}"
     else:
         caption += "\n⚠️ Номер потребує перевірки"
 
-    # (д) Шлём VCF в Telegram — вторым сообщением по пайплайну
-    #     (PDF будет первым, добавим в следующий шаг)
-    send_file(vcf_bytes, vcf_filename, caption=caption)
-    # (д) Отправка VCF с ретраями и логами (3 попытки по 30 сек. паузы)
     for attempt in range(1, 4):
         try:
             send_file(vcf_bytes, vcf_filename, caption=caption)
             log_event("vcf_sent", order_id=str(order_id), status="ok", attempt=attempt)
-            break  # успех — выходим из цикла
+            break
         except Exception as e:
-            # Логируем ошибку попытки
             log_event("vcf_sent", order_id=str(order_id), status="error", attempt=attempt, error=str(e))
             if attempt < 3:
-                time.sleep(30)  # пауза перед повтором
+                time.sleep(30)
             else:
-                # после 3-й неудачи пробрасываем ошибку, FastAPI вернёт 500
                 raise
 
+    # ---------- (опционально) Сообщение №3: черновик клиенту — добавим позже ----------
+
     return {"status": "ok", "order_id": str(order_id)}
+
 
 
     # (е) Для контроля можно отправить короткий текст

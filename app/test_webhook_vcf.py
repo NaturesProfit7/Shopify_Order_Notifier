@@ -74,13 +74,45 @@ def scenario_bad_phone(order_id: int) -> dict:
     o["customer"] = {"first_name": "Анна", "last_name": "Романюк", "phone": "12345"}
     return o
 
+def scenario_pdf_demo(order_id: int) -> dict:
+    return {
+        "id": order_id,
+        "order_number": order_id,
+        "created_at": "2025-08-16T12:34:56+03:00",
+        "customer": {"first_name": "Іван", "last_name": "Петренко"},
+        "shipping_address": {
+            "address1": "вул. Хрещатик, 1",
+            "city": "Київ",
+            "zip": "01001",
+            "country": "Україна",
+        },
+        "line_items": [
+            {"title": "Адресник серце (золото) 30мм", "quantity": 1, "price": "450.00"},
+            {"title": "Шнурочок флуоресцентний", "quantity": 1, "price": "50.00"},
+            {"title": "Намистинки", "quantity": 1, "price": "50.00"},
+        ],
+    }
+
+
+def scenario_root_phone(order_id: int) -> dict:
+    o = {
+        "id": order_id,
+        "order_number": order_id,
+        "phone": "+380 (67) 232 62 39",  # номер в корне заказа
+        "customer": {"first_name": "Іван", "last_name": "Петренко"},
+    }
+    return o
+
 
 SCENARIOS = {
     "full_ok": scenario_full_ok,
     "fallback_shipping": scenario_fallback_shipping,
     "no_phone": scenario_no_phone,
+    "pdf_demo": scenario_pdf_demo,
+    "root_phone": scenario_root_phone,
     "bad_phone": scenario_bad_phone,
 }
+
 
 
 # ---------- CLI ----------
