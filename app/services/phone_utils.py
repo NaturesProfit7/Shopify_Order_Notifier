@@ -6,9 +6,7 @@ UA_COUNTRY = "380"
 
 # --- helpers ---------------------------------------------------------------
 
-_SPLIT_PAT = re.compile(
-    r"[;/,\|\n]"            # разделители нескольких номеров
-)
+_SPLIT_PAT = re.compile(r"[;/,\|\n]")  # разделители нескольких номеров
 
 _EXT_PAT = re.compile(
     r"(\s*(доб\.?|ext\.?|ext|доб|x|#)\s*\d+)$",
@@ -33,13 +31,6 @@ def normalize_ua_phone(phone_raw: str | None) -> Optional[str]:
     """
     Преобразует входной номер к E.164 формату: +380XXXXXXXXX.
     Возвращает None, если привести нельзя.
-    Поддерживает:
-      - '+380XXXXXXXXX', '380XXXXXXXXX'
-      - '067XXXXXXX'  (локальный)
-      - '+38 067 XXX XX XX'
-      - '00380XXXXXXXXX' (международный префикс 00)
-      - строки с 'доб./ext/x#' в конце (срезаются)
-      - строки с несколькими номерами (берётся первый)
     """
     if not phone_raw:
         return None
@@ -49,37 +40,23 @@ def normalize_ua_phone(phone_raw: str | None) -> Optional[str]:
     if not digits:
         return None
 
-    # 00380XXXXXXXXX -> 380XXXXXXXXX
     if digits.startswith("00380") and len(digits) >= 14:
         digits = digits[2:]  # срезаем '00' -> '380...'
 
-    # канонические варианты
     if len(digits) == 12 and digits.startswith(UA_COUNTRY):
         return f"+{digits}"
 
     if len(digits) == 10 and digits.startswith("0"):
         return f"+{UA_COUNTRY}{digits[1:]}"
 
-    # tolerant: иногда попадается '+38' + '0XXXXXXXXX' -> 12 цифр '380...'
-    if len(digits) == 11 and digits.startswith("80"):
-        # это не стандарт UA, безопасно не приводить
-        return None
-
     return None
 
 
 def pretty_ua_phone(e164: str) -> str:
     """
-    Делает вид +38•0XX•XXX•XX•XX для украинских номеров.
-    Если формат не E.164(+380XXXXXXXXX), вернёт как есть.
+    Возвращает украинский номер как есть (+380XXXXXXXXX), без разделителей.
+    Если строка не E.164, вернёт её как есть.
     """
     if not (isinstance(e164, str) and e164.startswith("+") and len(e164) == 13 and e164[1:].isdigit()):
         return e164
-    if not e164.startswith("+380"):
-        return e164
-
-    tail = e164[4:]
-    if len(tail) != 9 or not tail.isdigit():
-        return e164
-
-    return f"+38•0{tail[0:2]}•{tail[2:5]}•{tail[5:7]}•{tail[7:9]}"
+    return e164

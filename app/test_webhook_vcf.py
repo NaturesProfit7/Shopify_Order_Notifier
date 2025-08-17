@@ -103,6 +103,9 @@ def scenario_root_phone(order_id: int) -> dict:
     }
     return o
 
+def scenario_id_only(order_id: int) -> dict:
+    return {"id": order_id}
+
 
 SCENARIOS = {
     "full_ok": scenario_full_ok,
@@ -110,6 +113,7 @@ SCENARIOS = {
     "no_phone": scenario_no_phone,
     "pdf_demo": scenario_pdf_demo,
     "root_phone": scenario_root_phone,
+    "id_only":scenario_id_only,
     "bad_phone": scenario_bad_phone,
 }
 

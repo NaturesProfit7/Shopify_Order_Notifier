@@ -11,6 +11,8 @@ from app.services.tg_service import send_text, send_file
 from app.services.pdf_service import build_order_pdf
 
 from app.services.message_templates import render_simple_confirm
+from app.services.shopify_service import get_order
+
 
 
 import logging, json as _json, time
@@ -68,6 +70,21 @@ def _extract_phone(order: dict) -> str:
             return str(v).strip()
     return ""
 
+def _display_order_number(order: dict, fallback_id: int | str) -> str:
+    """
+    Возвращает человеко-читаемый номер заказа:
+    - order['order_number'] (число) — приоритет
+    - order['name'] вида '#1719' — запасной вариант
+    - иначе fallback_id
+    """
+    num = order.get("order_number")
+    if num:
+        return str(num)
+    name = order.get("name")
+    if isinstance(name, str) and name.lstrip("#").isdigit():
+        return name.lstrip("#")
+    return str(fallback_id)
+
 
 @app.get("/health")
 def health():
@@ -101,14 +118,23 @@ async def shopify_webhook(request: Request):
     if await is_processed(order_id):
         return {"status": "duplicate", "order_id": str(order_id)}
 
-    # 6) Помечаем как обработанный
+    # 6) Помечаем как обработанный (MVP: в памяти) — позже вынесем в БД :contentReference[oaicite:2]{index=2}
     await mark_processed(order_id)
+
+    # 7) Тянем полный заказ из Shopify; при ошибке кидаем 502 (чтобы перехватить ретрайом)
+    try:
+        order_full = get_order(order_id)
+        pretty_order_no = _display_order_number(order_full, order_id)
+        log_event("shopify_get_order_ok", order_id=str(order_id))
+    except Exception as e:
+        log_event("shopify_get_order_err", order_id=str(order_id), error=str(e))
+        raise HTTPException(status_code=502, detail="Failed to fetch order from Shopify")
 
     # ---------- Сообщение №1: PDF ----------
     try:
-        pdf_bytes, pdf_filename = build_order_pdf(event)
-        first_name, last_name = _extract_customer_name(event)
-        pdf_caption = f"Замовлення #{event.get('order_number') or event.get('id')} • {(first_name + ' ' + last_name).strip()}".strip()
+        pdf_bytes, pdf_filename = build_order_pdf(order_full)  # строим PDF из полных данных :contentReference[oaicite:3]{index=3}
+        first_name, last_name = _extract_customer_name(order_full)
+        pdf_caption = f"Замовлення #{pretty_order_no} • {(first_name + ' ' + last_name).strip()}".strip()
 
         for attempt in range(1, 4):
             try:
@@ -122,21 +148,20 @@ async def shopify_webhook(request: Request):
                 else:
                     raise
     except Exception as e:
-        # если PDF не ушёл после 3 попыток — ломаем обработку
-        raise
+        raise  # пускай FastAPI отдаст 500 — увидим стек
 
     # ---------- Сообщение №2: VCF ----------
-    first_name, last_name = _extract_customer_name(event)
-    phone_raw = _extract_phone(event)
+    first_name, last_name = _extract_customer_name(order_full)
+    phone_raw = _extract_phone(order_full)
     log_event("phone_extracted", order_id=str(order_id), phone_raw=phone_raw)
 
-    phone_e164 = normalize_ua_phone(phone_raw)
+    phone_e164 = normalize_ua_phone(phone_raw)  # нормализуем по нашему правилу (+380..) :contentReference[oaicite:4]{index=4}
     log_event("phone_normalized", order_id=str(order_id), phone_e164=phone_e164)
 
-    vcf_bytes, vcf_filename = build_contact_vcf(
+    vcf_bytes, vcf_filename = build_contact_vcf(  # TEL добавляется только если phone_e164 не None :contentReference[oaicite:5]{index=5}
         first_name=first_name,
         last_name=last_name,
-        order_id=str(order_id),
+        order_id=pretty_order_no,
         phone_e164=phone_e164,
         embed_order_in_n=True,
     )
@@ -159,12 +184,12 @@ async def shopify_webhook(request: Request):
             else:
                 raise
 
-    # ---------- Сообщение №3: черновик менеджеру ----------
-    draft = render_simple_confirm(event)
+    # ---------- Сообщение №3: простой шаблон менеджеру ----------
+    draft = render_simple_confirm(order_full)  # минимальный текст (имя + № заказа) :contentReference[oaicite:6]{index=6}
 
     for attempt in range(1, 4):
         try:
-            send_text(draft)
+            send_text(draft)  # шлём обычным текстом (tg_service уже настроен) :contentReference[oaicite:7]{index=7}
             log_event("draft_msg_sent", order_id=str(order_id), status="ok", attempt=attempt)
             break
         except Exception as e:
@@ -175,6 +200,7 @@ async def shopify_webhook(request: Request):
                 raise
 
     return {"status": "ok", "order_id": str(order_id)}
+
 
 
 
