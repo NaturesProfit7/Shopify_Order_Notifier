@@ -10,7 +10,7 @@ from app.services.tg_service import send_text, send_file
 
 from app.services.pdf_service import build_order_pdf
 
-from app.services.message_templates import render_confirm
+from app.services.message_templates import render_simple_confirm
 
 
 import logging, json as _json, time
@@ -160,7 +160,7 @@ async def shopify_webhook(request: Request):
                 raise
 
     # ---------- Сообщение №3: черновик менеджеру ----------
-    draft = render_confirm(event)
+    draft = render_simple_confirm(event)
 
     for attempt in range(1, 4):
         try:

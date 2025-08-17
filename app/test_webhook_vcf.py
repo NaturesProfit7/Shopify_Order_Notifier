@@ -119,7 +119,7 @@ SCENARIOS = {
 
 def parse_args():
     p = argparse.ArgumentParser(description="Shopify webhook VCF tester")
-    p.add_argument("--url", default="http://127.0.0.1:8000/webhooks/shopify/orders")
+    p.add_argument("--url", default="http://127.0.0.1:8001/webhooks/shopify/orders")
     p.add_argument("--secret", default="test_secret", help="SHOPIFY_WEBHOOK_SECRET")
     p.add_argument("--scenario", choices=SCENARIOS.keys(), default="full_ok")
     p.add_argument("--order-id", type=int, default=int(time.time()),
