@@ -10,6 +10,8 @@ from app.services.tg_service import send_text, send_file
 
 from app.services.pdf_service import build_order_pdf
 
+from app.services.message_templates import render_confirm
+
 
 import logging, json as _json, time
 logger = logging.getLogger("app")
@@ -126,8 +128,10 @@ async def shopify_webhook(request: Request):
     # ---------- Сообщение №2: VCF ----------
     first_name, last_name = _extract_customer_name(event)
     phone_raw = _extract_phone(event)
-    log_event("phone_extracted", order_id=str(order_id), phone_raw=phone_raw)  # <— добавили лог
+    log_event("phone_extracted", order_id=str(order_id), phone_raw=phone_raw)
+
     phone_e164 = normalize_ua_phone(phone_raw)
+    log_event("phone_normalized", order_id=str(order_id), phone_e164=phone_e164)
 
     vcf_bytes, vcf_filename = build_contact_vcf(
         first_name=first_name,
@@ -155,7 +159,20 @@ async def shopify_webhook(request: Request):
             else:
                 raise
 
-    # ---------- (опционально) Сообщение №3: черновик клиенту — добавим позже ----------
+    # ---------- Сообщение №3: черновик менеджеру ----------
+    draft = render_confirm(event)
+
+    for attempt in range(1, 4):
+        try:
+            send_text(draft)
+            log_event("draft_msg_sent", order_id=str(order_id), status="ok", attempt=attempt)
+            break
+        except Exception as e:
+            log_event("draft_msg_sent", order_id=str(order_id), status="error", attempt=attempt, error=str(e))
+            if attempt < 3:
+                time.sleep(30)
+            else:
+                raise
 
     return {"status": "ok", "order_id": str(order_id)}
 

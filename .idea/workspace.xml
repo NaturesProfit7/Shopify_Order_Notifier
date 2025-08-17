@@ -4,12 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="Naive idempotency in memory">
-      <change afterPath="$PROJECT_DIR$/app/services/pdf_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/Shopify_Order_Notifier.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/Shopify_Order_Notifier.iml" afterDir="false" />
+    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="Done PDF and VCF services">
+      <change afterPath="$PROJECT_DIR$/app/services/message_templates.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/test_webhook_vcf.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/test_webhook_vcf.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/phone_utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/phone_utils.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -96,7 +95,15 @@
       <option name="project" value="LOCAL" />
       <updated>1755288735631</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="Done PDF and VCF services">
+      <option name="closed" value="true" />
+      <created>1755455087825</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1755455087825</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -105,6 +112,7 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Modify requirements.txt" />
     <MESSAGE value="Naive idempotency in memory" />
-    <option name="LAST_COMMIT_MESSAGE" value="Naive idempotency in memory" />
+    <MESSAGE value="Done PDF and VCF services" />
+    <option name="LAST_COMMIT_MESSAGE" value="Done PDF and VCF services" />
   </component>
 </project>
