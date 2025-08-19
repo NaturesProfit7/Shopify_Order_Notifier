@@ -1,5 +1,4 @@
 # app/db.py
-from __future__ import annotations
 import os
 from contextlib import contextmanager
 from sqlalchemy import create_engine
@@ -9,9 +8,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
 
-# sync engine, pool_pre_ping чтобы отлавливать отвалившиеся коннекты
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 class Base(DeclarativeBase):
@@ -19,13 +16,12 @@ class Base(DeclarativeBase):
 
 @contextmanager
 def get_session():
-    """Контекст-менеджер для единичных транзакций."""
-    session = SessionLocal()
+    s = SessionLocal()
     try:
-        yield session
-        session.commit()
+        yield s
+        s.commit()
     except Exception:
-        session.rollback()
+        s.rollback()
         raise
     finally:
-        session.close()
+        s.close()
