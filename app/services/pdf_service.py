@@ -36,7 +36,11 @@ def _fmt_date(dt_str: str | None) -> str:
     try:
         return datetime.fromisoformat(dt_str.replace("Z", "+00:00")).strftime("%d.%m.%Y %H:%M")
     except Exception:
-        return datetime.now().strftime("%d.%m.%Y %H:%М")
+        # Fallback to current time if parsing fails.
+        # Use Latin 'M' in the minutes placeholder to avoid ValueError
+        # when strftime encounters the Cyrillic letter (which happened
+        # in the previous implementation).
+        return datetime.now().strftime("%d.%m.%Y %H:%M")
 
 def _shipping_title(order: dict) -> str:
     lines = order.get("shipping_lines") or []

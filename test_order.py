@@ -39,6 +39,16 @@ class OrderTester:
         self.webhook_url = f"{self.host}/webhooks/shopify/orders"
         self.secret = os.getenv("SHOPIFY_WEBHOOK_SECRET", "test_secret")
 
+    def check_telegram_env(self) -> None:
+        """Проверяет наличие переменных окружения для Telegram."""
+        missing = [
+            var for var in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_TARGET_CHAT_ID")
+            if not os.getenv(var)
+        ]
+        if missing:
+            print("\n⚠️ Не заданы переменные окружения: " + ", ".join(missing))
+            print("   Отправка PDF/VCF и сообщений в Telegram может не выполниться")
+
     def get_order_from_shopify(self, order_id: int) -> Optional[Dict[Any, Any]]:
         """Получает заказ из Shopify API."""
         print(f"📥 Получаем заказ #{order_id} из Shopify...")
@@ -215,6 +225,9 @@ class OrderTester:
         print("=" * 50)
         print(f"🧪 ТЕСТИРОВАНИЕ ЗАКАЗА #{order_id}")
         print("=" * 50)
+
+        # Проверяем, настроена ли отправка в Telegram
+        self.check_telegram_env()
 
         # 1. Получаем заказ из Shopify
         order_data = self.get_order_from_shopify(order_id)
