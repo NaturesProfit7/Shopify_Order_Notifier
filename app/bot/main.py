@@ -8,7 +8,8 @@ from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.bot.handlers import callbacks, commands
+from app.bot.handlers import callbacks
+from app.bot.routers import commands
 from app.db import get_session
 from app.models import Order, OrderStatus
 
