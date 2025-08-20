@@ -382,8 +382,15 @@ async def telegram_webhook(request: Request):
     if action == "orders_list":
         kind = params.get("kind", "all")
         offset = int(params.get("offset", 0))
-        buttons = orders_list_buttons(kind, offset, page_size=10)
-        send_text_with_buttons(f"Список замовлень ({kind})", buttons)
+        buttons = orders_list_buttons(
+            kind,
+            offset,
+            page_size=10,
+            has_prev=offset > 0,
+            has_next=True,
+        )
+        current_page = offset // 10 + 1
+        send_text_with_buttons(f"Список замовлень ({kind}) {current_page}/1", buttons)
         answer_callback_query(cb_id)
         return {"ok": True}
 

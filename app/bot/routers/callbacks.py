@@ -126,6 +126,9 @@ async def on_orders_list_click(cb: CallbackQuery):
         query = s.query(Order)
         if kind == "pending":
             query = query.filter(Order.status == OrderStatus.NEW)
+
+        total = query.count()
+
         orders = (
             query.order_by(Order.created_at.desc())
             .offset(offset)
@@ -147,10 +150,23 @@ async def on_orders_list_click(cb: CallbackQuery):
                 [{"text": f"№{order_no}", "callback_data": f"order:{order.id}:view"}]
             )
 
-    # Pagination buttons
-    buttons.extend(orders_list_buttons(kind, offset, PAGE_SIZE))
+    total_pages = max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1)
+    current_page = min(offset // PAGE_SIZE + 1, total_pages)
+    has_prev = offset > 0
+    has_next = offset + PAGE_SIZE < total
 
-    text = f"Список замовлень ({kind})"
+    # Pagination buttons
+    buttons.extend(
+        orders_list_buttons(
+            kind,
+            offset,
+            PAGE_SIZE,
+            has_prev=has_prev,
+            has_next=has_next,
+        )
+    )
+
+    text = f"Список замовлень ({kind}) {current_page}/{total_pages}"
     if lines:
         text += "\n\n" + "\n".join(lines)
     else:
