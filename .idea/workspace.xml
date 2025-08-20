@@ -4,21 +4,14 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="Add DB. Migration">
-      <change afterPath="$PROJECT_DIR$/app/bot/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/dispatcher.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/keyboards.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/routers/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/routers/callbacks.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/routers/commands.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/texts.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/services/status_ui.py" afterDir="false" />
+    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="Test">
+      <change afterPath="$PROJECT_DIR$/test_order.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/test_specific_order.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/config.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/db.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/db.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/services/tg_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/tg_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/state.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/state.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -85,6 +78,7 @@
       <recent name="G:\Github Repositories\Shopify_Order_Notifier111" />
     </key>
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="G:\Github Repositories\Shopify_Order_Notifier" />
       <recent name="G:\Github Repositories\Shopify_Order_Notifier\app\bot\routers" />
     </key>
   </component>
@@ -168,7 +162,15 @@
       <option name="project" value="LOCAL" />
       <updated>1755472601354</updated>
     </task>
-    <option name="localTasksCounter" value="9" />
+    <task id="LOCAL-00009" summary="Test">
+      <option name="closed" value="true" />
+      <created>1755594166148</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1755594166148</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -183,6 +185,7 @@
     <MESSAGE value="Add real Shopify API, redo VCF order number" />
     <MESSAGE value="Format PDF" />
     <MESSAGE value="Add DB. Migration" />
-    <option name="LAST_COMMIT_MESSAGE" value="Add DB. Migration" />
+    <MESSAGE value="Test" />
+    <option name="LAST_COMMIT_MESSAGE" value="Test" />
   </component>
 </project>
