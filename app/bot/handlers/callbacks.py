@@ -180,7 +180,7 @@ async def handle_order_action(callback: CallbackQuery, state: FSMContext):
             await callback.message.edit_reply_markup(reply_markup=keyboard)
             await callback.answer("⏰ Оберіть час нагадування")
 
-        elif action == "show":
+        elif action in ("show", "view"):
             # Показываем детальную информацию
             details = build_order_message(order, detailed=True)
             await callback.answer(details, show_alert=True)
