@@ -5,7 +5,11 @@ from aiogram.types import CallbackQuery
 
 from app.db import get_session
 from app.models import Order, OrderStatus
-from app.services.menu_ui import order_card_buttons
+from app.services.menu_ui import (
+    order_card_buttons,
+    orders_list_buttons,
+    main_menu_buttons,
+)
 from app.services.status_ui import status_title
 from app.bot.services.message_builder import build_order_message
 from app.bot.texts import (
@@ -13,7 +17,6 @@ from app.bot.texts import (
 )  # см. ниже "texts.py" (быстрая версия внутри этого файла)
 
 from app.bot.services.message_builder import get_status_emoji
-from app.services.menu_ui import orders_list_buttons
 from app.services.tg_service import edit_message_text, send_text_with_buttons
 
 router = Router()
@@ -77,6 +80,15 @@ async def on_order_status_click(cb: CallbackQuery):
         edit_message_text(
             chat_id, message_id, new_text
         )  # клавиши пересоберёт твой main при новых событиях
+
+
+@router.callback_query(F.data == "menu:main")
+async def on_main_menu_click(cb: CallbackQuery):
+    """Return to the main menu."""
+    result = send_text_with_buttons("Главное меню", main_menu_buttons())
+    if asyncio.iscoroutine(result):
+        await result
+    await cb.answer()
 
 
 def _parse_orders_list_data(data: str):
