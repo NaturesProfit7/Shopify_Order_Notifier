@@ -4,19 +4,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="Add unified test_order.py. &#10;Fixed BD">
-      <change afterPath="$PROJECT_DIR$/alembic/versions/b123456789ab_add_comments_and_reminders.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/handlers/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/handlers/callbacks.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/handlers/commands.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/main.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/services/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/services/message_builder.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/bot/services/reminder_service.py" afterDir="false" />
+    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="Add bot logic, keyboards">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/bot/keyboards.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/bot/keyboards.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -183,7 +172,15 @@
       <option name="project" value="LOCAL" />
       <updated>1755696423161</updated>
     </task>
-    <option name="localTasksCounter" value="11" />
+    <task id="LOCAL-00011" summary="Add bot logic, keyboards">
+      <option name="closed" value="true" />
+      <created>1755700750089</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1755700750089</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -200,6 +197,7 @@
     <MESSAGE value="Add DB. Migration" />
     <MESSAGE value="Test" />
     <MESSAGE value="Add unified test_order.py. &#10;Fixed BD" />
-    <option name="LAST_COMMIT_MESSAGE" value="Add unified test_order.py. &#10;Fixed BD" />
+    <MESSAGE value="Add bot logic, keyboards" />
+    <option name="LAST_COMMIT_MESSAGE" value="Add bot logic, keyboards" />
   </component>
 </project>
