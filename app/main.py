@@ -10,13 +10,21 @@ from app.services.phone_utils import normalize_ua_phone, pretty_ua_phone
 from app.services.vcf_service import build_contact_vcf
 from app.services.pdf_service import build_order_pdf
 from app.services.shopify_service import get_order
-from app.services.tg_service import send_file, send_text_with_buttons
+from app.services.tg_service import (
+    send_file,
+    send_text_with_buttons,
+    answer_callback_query,
+    edit_message_text,
+)
+from app.services.status_ui import status_title, buttons_for_status
+from app.services.menu_ui import orders_list_buttons, order_card_buttons
+from app.callbacks import route_callback
 
 from app.bot.main import start_bot, stop_bot, get_bot
 from app.bot.services.message_builder import build_order_message
 from app.bot.keyboards import get_order_keyboard
 from app.db import get_session
-from app.models import Order
+from app.models import Order, OrderStatus
 
 import logging, json as _json, time
 import os
@@ -319,3 +327,68 @@ async def shopify_webhook(request: Request):
     log_event("webhook_processed", order_id=str(order_id))
     logger.info(f"=== WEBHOOK PROCESSED SUCCESSFULLY for order {order_id} ===")
     return {"status": "ok", "order_id": str(order_id)}
+
+
+@app.post("/tg/webhook")
+async def telegram_webhook(request: Request):
+    """Webhook для обработки callback_query из Telegram"""
+    data = await request.json()
+    cb = data.get("callback_query") if isinstance(data, dict) else None
+    if not cb:
+        return {"ok": True}
+
+    action, params = route_callback(cb.get("data", ""))
+    cb_id = cb.get("id")
+    if not action:
+        if cb_id:
+            answer_callback_query(cb_id, "Невірні дані кнопки")
+        return {"ok": False}
+
+    chat_id = (cb.get("message", {}).get("chat", {}) or {}).get("id")
+    message_id = cb.get("message", {}).get("message_id")
+
+    if action == "order_set":
+        order_id = params.get("order_id")
+        status_str = params.get("status")
+        try:
+            new_status = OrderStatus(status_str)
+        except Exception:
+            answer_callback_query(cb_id, "Невірні дані кнопки")
+            return {"ok": False}
+
+        with get_session() as s:
+            db = s.get(Order, order_id)
+            if not db:
+                answer_callback_query(cb_id, "Замовлення не знайдено")
+                return {"ok": False}
+            db.status = new_status
+            s.commit()
+            new_text = build_order_message(db)
+            buttons = buttons_for_status(new_status, order_id)
+
+        if chat_id and message_id:
+            edit_message_text(chat_id, message_id, new_text, buttons)
+        answer_callback_query(cb_id, f"Статус → {status_title(new_status)}")
+        return {"ok": True}
+
+    if action == "orders_list":
+        kind = params.get("kind", "all")
+        offset = int(params.get("offset", 0))
+        buttons = orders_list_buttons(kind, offset, page_size=10)
+        send_text_with_buttons(f"Список замовлень ({kind})", buttons)
+        answer_callback_query(cb_id)
+        return {"ok": True}
+
+    if action == "order_view":
+        order_id = params.get("order_id")
+        buttons = order_card_buttons(order_id)
+        send_text_with_buttons(f"Картка замовлення #{order_id}", buttons)
+        answer_callback_query(cb_id)
+        return {"ok": True}
+
+    if action == "order_resend":
+        answer_callback_query(cb_id, "Поки не реалізовано")
+        return {"ok": True}
+
+    answer_callback_query(cb_id, "Невірні дані кнопки")
+    return {"ok": False}
