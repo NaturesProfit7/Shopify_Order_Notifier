@@ -77,14 +77,16 @@ def test_orders_list_buttons_structure():
         [
             {"text": "⬅️", "callback_data": "orders:list:pending:offset=0"},
             {"text": "➡️", "callback_data": "orders:list:pending:offset=10"},
-        ]
+        ],
+        [{"text": "🏠 Главное меню", "callback_data": "menu:main"}],
     ]
     buttons_all = orders_list_buttons("all", 0, page_size=5)
     assert buttons_all == [
         [
             {"text": "⬅️", "callback_data": "orders:list:all:offset=0"},
             {"text": "➡️", "callback_data": "orders:list:all:offset=5"},
-        ]
+        ],
+        [{"text": "🏠 Главное меню", "callback_data": "menu:main"}],
     ]
 
 
@@ -95,3 +97,4 @@ def test_order_card_buttons_structure():
         {"text": "VCF", "callback_data": "order:7:resend:vcf"},
     ]
     assert buttons[1] == [{"text": "Назад", "callback_data": "orders:list:pending:offset=0"}]
+    assert buttons[2] == [{"text": "🏠 Главное меню", "callback_data": "menu:main"}]

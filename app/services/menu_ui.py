@@ -20,7 +20,8 @@ def orders_list_buttons(kind: Literal["pending", "all"], offset: int, page_size:
         [
             {"text": "⬅️", "callback_data": f"orders:list:{kind}:offset={prev_offset}"},
             {"text": "➡️", "callback_data": f"orders:list:{kind}:offset={next_offset}"},
-        ]
+        ],
+        [{"text": "🏠 Главное меню", "callback_data": "menu:main"}],
     ]
 
 
@@ -38,5 +39,6 @@ def order_card_buttons(order_id: int) -> List[List[Button]]:
     """Кнопки в карточке заказа"""
     buttons = order_actions_buttons(order_id)
     buttons.append([{ "text": "Назад", "callback_data": "orders:list:pending:offset=0" }])
+    buttons.append([{ "text": "🏠 Главное меню", "callback_data": "menu:main" }])
     return buttons
 
