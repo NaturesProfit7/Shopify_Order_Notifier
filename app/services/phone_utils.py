@@ -58,7 +58,7 @@ def normalize_ua_phone(phone_raw: str | None) -> Optional[str]:
 
 def pretty_ua_phone(e164: str) -> str:
     """
-    Форматирует украинский номер для отображения: +380 XX XXX XX XX
+    Форматирует украинский номер для отображения: +38•XXX•XXX•XX•XX
     Если строка не E.164, вернёт её как есть.
     """
     if not e164:
@@ -68,5 +68,5 @@ def pretty_ua_phone(e164: str) -> str:
     if not (isinstance(e164, str) and e164.startswith("+380") and len(e164) == 13 and e164[1:].isdigit()):
         return e164
 
-    # Форматируем: +380 XX XXX XX XX
-    return f"{e164[:4]} {e164[4:6]} {e164[6:9]} {e164[9:11]} {e164[11:]}"
+    # Форматируем: +38•XXX•XXX•XX•XX
+    return f"{e164[:3]}•{e164[3:6]}•{e164[6:9]}•{e164[9:11]}•{e164[11:]}"
