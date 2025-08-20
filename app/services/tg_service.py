@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import json
 import requests
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,9 +29,11 @@ def send_text(message: str):
     return resp.json()
 
 def send_file(data: bytes, filename: str, caption: str | None = None):
-    """
-    Отправка документа в Telegram из памяти.
-    Для VCF передаём MIME 'text/vcard' (можно и без него, но так корректнее).
+    """Отправка документа в Telegram из памяти.
+
+    MIME-тип выбирается на основании расширения файла: для PDF используется
+    ``application/pdf``, для ``.vcf`` — ``text/vcard``. Для остальных
+    файлов используется ``application/octet-stream``.
     """
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
@@ -37,12 +41,17 @@ def send_file(data: bytes, filename: str, caption: str | None = None):
         raise RuntimeError("TELEGRAM_BOT_TOKEN or TELEGRAM_TARGET_CHAT_ID is not set in .env")
 
     url = f"https://api.telegram.org/bot{token}/sendDocument"
-    files = {
-        "document": (filename, data, "text/vcard"),
-    }
-    payload = {
-        "chat_id": chat_id,
-    }
+
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".pdf":
+        mime = "application/pdf"
+    elif suffix in {".vcf", ".vcard"}:
+        mime = "text/vcard"
+    else:
+        mime = "application/octet-stream"
+
+    files = {"document": (filename, data, mime)}
+    payload = {"chat_id": chat_id}
     if caption:
         payload["caption"] = caption
 
@@ -50,9 +59,6 @@ def send_file(data: bytes, filename: str, caption: str | None = None):
     if resp.status_code != 200:
         raise RuntimeError(f"Telegram API error: {resp.text}")
     return resp.json()
-
-# app/services/tg_service.py — добавить рядом с другими импортами
-import os, json, requests
 
 def send_text_with_buttons(message: str, buttons: list[list[dict]]):
     token = os.getenv("TELEGRAM_BOT_TOKEN")

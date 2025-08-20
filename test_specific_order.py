@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def test_order_webhook(order_id: int):
+def run_order_webhook(order_id: int):
     """
     Симулирует webhook от Shopify для конкретного заказа.
     Сначала получает данные заказа через API, затем отправляет как webhook.
@@ -86,4 +86,4 @@ if __name__ == "__main__":
     print(f"🧪 Тестирование обработки заказа #{ORDER_ID}")
     print("=" * 50)
 
-    test_order_webhook(ORDER_ID)
+    run_order_webhook(ORDER_ID)

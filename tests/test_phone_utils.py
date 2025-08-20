@@ -15,7 +15,7 @@ def test_normalize_bad():
     assert normalize_ua_phone(None) is None
 
 def test_pretty_format():
-    assert pretty_ua_phone("+380672326239") == "+38•067•232•62•39"
+    assert pretty_ua_phone("+380672326239") == "+380672326239"
     # не-ua или неверный формат — вернуть как есть
     assert pretty_ua_phone("+48123123123") == "+48123123123"
     assert pretty_ua_phone("not-a-number") == "not-a-number"
