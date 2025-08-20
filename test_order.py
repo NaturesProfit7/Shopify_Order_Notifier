@@ -34,7 +34,7 @@ load_dotenv(root_dir / '.env')
 class OrderTester:
     """Класс для тестирования обработки заказов."""
 
-    def __init__(self, host: str = "http://localhost:8001"):
+    def __init__(self, host: str = "http://localhost:8003"):
         self.host = host.rstrip('/')
         self.webhook_url = f"{self.host}/webhooks/shopify/orders"
         self.secret = os.getenv("SHOPIFY_WEBHOOK_SECRET", "test_secret")
@@ -280,7 +280,7 @@ def main():
 
     parser.add_argument(
         "--host",
-        default="http://localhost:8001",
+        default="http://localhost:8003",
         help="Адрес сервера (по умолчанию: http://localhost:8001)"
     )
 
