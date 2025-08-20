@@ -16,10 +16,14 @@ if not DATABASE_URL:
 # sync engine, pool_pre_ping чтобы отлавливать отвалившиеся коннекты
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+SessionLocal = sessionmaker(
+    bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
+)
+
 
 class Base(DeclarativeBase):
     pass
+
 
 @contextmanager
 def get_session():
