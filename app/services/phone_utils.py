@@ -57,16 +57,24 @@ def normalize_ua_phone(phone_raw: str | None) -> Optional[str]:
 
 
 def pretty_ua_phone(e164: str) -> str:
+    """Format a Ukrainian phone number for display.
+
+    Converts a number in E.164 format ``+380XXXXXXXXX`` to a human readable form
+    ``+380 67 232 62 39``. If the input is not a valid Ukrainian E.164 number
+    the value is returned unchanged.
     """
-    Форматирует украинский номер для отображения: +38•XXX•XXX•XX•XX
-    Если строка не E.164, вернёт её как есть.
-    """
+
     if not e164:
         return ""
 
-    # Проверяем, что это E.164 формат украинского номера
-    if not (isinstance(e164, str) and e164.startswith("+380") and len(e164) == 13 and e164[1:].isdigit()):
+    # Ensure the string matches the ``+380XXXXXXXXX`` pattern
+    if not (
+        isinstance(e164, str)
+        and e164.startswith("+380")
+        and len(e164) == 13
+        and e164[1:].isdigit()
+    ):
         return e164
 
-    # Форматируем: +38•XXX•XXX•XX•XX
-    return f"{e164[:3]}•{e164[3:6]}•{e164[6:9]}•{e164[9:11]}•{e164[11:]}"
+    # Split into groups: +380 67 232 62 39
+    return f"{e164[:4]} {e164[4:6]} {e164[6:9]} {e164[9:11]} {e164[11:]}"
