@@ -13,17 +13,21 @@ _EXT_PAT = re.compile(
     flags=re.IGNORECASE
 )
 
+
 def _only_digits(s: str | None) -> str:
     return re.sub(r"\D", "", s or "")
+
 
 def _strip_extension(s: str) -> str:
     """Срезает 'доб.123', 'ext 45', 'x99' в конце строки."""
     return _EXT_PAT.sub("", s or "").strip()
 
+
 def _first_chunk(s: str) -> str:
     """Берём первый фрагмент, если в строке несколько номеров."""
     parts = [p.strip() for p in _SPLIT_PAT.split(s or "") if p.strip()]
     return parts[0] if parts else (s or "")
+
 
 # --- public API ------------------------------------------------------------
 
@@ -54,9 +58,15 @@ def normalize_ua_phone(phone_raw: str | None) -> Optional[str]:
 
 def pretty_ua_phone(e164: str) -> str:
     """
-    Возвращает украинский номер как есть (+380XXXXXXXXX), без разделителей.
+    Форматирует украинский номер для отображения: +380 XX XXX XX XX
     Если строка не E.164, вернёт её как есть.
     """
-    if not (isinstance(e164, str) and e164.startswith("+") and len(e164) == 13 and e164[1:].isdigit()):
+    if not e164:
+        return ""
+
+    # Проверяем, что это E.164 формат украинского номера
+    if not (isinstance(e164, str) and e164.startswith("+380") and len(e164) == 13 and e164[1:].isdigit()):
         return e164
-    return e164
+
+    # Форматируем: +380 XX XXX XX XX
+    return f"{e164[:4]} {e164[4:6]} {e164[6:9]} {e164[9:11]} {e164[11:]}"
