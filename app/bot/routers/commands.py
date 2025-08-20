@@ -1,3 +1,5 @@
+import asyncio
+
 from aiogram import Router
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
@@ -12,6 +14,9 @@ async def on_start(msg: Message):
     await msg.answer("Бот активен. Жмите кнопки под заказами 😉")
 
 
-@router.message(Command("menu"))
+@router.message(Command(commands=["menu"]))
 async def on_menu(msg: Message):
-    send_text_with_buttons("Главное меню", main_menu_buttons())
+    """Show main menu buttons."""
+    result = send_text_with_buttons("Главное меню", main_menu_buttons())
+    if asyncio.iscoroutine(result):
+        await result
