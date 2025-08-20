@@ -37,8 +37,10 @@ def test_orders_list_pending_calls_send_with_filtered_orders():
          patch("app.main.orders_list_buttons", return_value=fake_buttons) as list_mock, \
          patch("app.main.answer_callback_query") as answer_mock:
         asyncio.run(telegram_webhook(DummyRequest(data)))
-        send_mock.assert_called_once_with("Список замовлень (pending)", fake_buttons)
-        list_mock.assert_called_once_with("pending", 0, page_size=10)
+        send_mock.assert_called_once_with("Список замовлень (pending) 1/1", fake_buttons)
+        list_mock.assert_called_once_with(
+            "pending", 0, page_size=10, has_prev=False, has_next=True
+        )
         answer_mock.assert_called_once_with("cb1")
         get_session_mock.assert_not_called()
 
@@ -51,8 +53,10 @@ def test_orders_list_all_shows_all_orders():
          patch("app.main.orders_list_buttons", return_value=fake_buttons) as list_mock, \
          patch("app.main.answer_callback_query") as answer_mock:
         asyncio.run(telegram_webhook(DummyRequest(data)))
-        send_mock.assert_called_once_with("Список замовлень (all)", fake_buttons)
-        list_mock.assert_called_once_with("all", 0, page_size=10)
+        send_mock.assert_called_once_with("Список замовлень (all) 1/1", fake_buttons)
+        list_mock.assert_called_once_with(
+            "all", 0, page_size=10, has_prev=False, has_next=True
+        )
         answer_mock.assert_called_once_with("cb2")
         get_session_mock.assert_not_called()
 
@@ -72,20 +76,18 @@ def test_order_view_sends_card():
 
 
 def test_orders_list_buttons_structure():
-    buttons = orders_list_buttons("pending", 0, page_size=10)
+    buttons = orders_list_buttons(
+        "pending", 0, page_size=10, has_prev=False, has_next=True
+    )
     assert buttons == [
-        [
-            {"text": "⬅️", "callback_data": "orders:list:pending:offset=0"},
-            {"text": "➡️", "callback_data": "orders:list:pending:offset=10"},
-        ],
+        [{"text": "➡️", "callback_data": "orders:list:pending:offset=10"}],
         [{"text": "🏠 Главное меню", "callback_data": "menu:main"}],
     ]
-    buttons_all = orders_list_buttons("all", 0, page_size=5)
-    assert buttons_all == [
-        [
-            {"text": "⬅️", "callback_data": "orders:list:all:offset=0"},
-            {"text": "➡️", "callback_data": "orders:list:all:offset=5"},
-        ],
+    buttons_last = orders_list_buttons(
+        "all", 10, page_size=5, has_prev=True, has_next=False
+    )
+    assert buttons_last == [
+        [{"text": "⬅️", "callback_data": "orders:list:all:offset=5"}],
         [{"text": "🏠 Главное меню", "callback_data": "menu:main"}],
     ]
 
