@@ -5,15 +5,10 @@ from aiogram.types import CallbackQuery
 
 from app.db import get_session
 from app.models import Order, OrderStatus
-from app.services.menu_ui import order_card_buttons
-from app.services.status_ui import status_title
-from app.bot.services.message_builder import build_order_message
+from app.bot.services.message_builder import build_order_message, get_status_emoji
 from app.bot.texts import build_manager_message  # см. ниже "texts.py" (быстрая версия внутри этого файла)
-
-from app.bot.services.message_builder import get_status_emoji
-from app.services.menu_ui import orders_list_buttons
-=======
-
+from app.services.menu_ui import order_card_buttons, orders_list_buttons
+from app.services.status_ui import status_title
 from app.services.tg_service import edit_message_text, send_text_with_buttons
 
 router = Router()
