@@ -4,12 +4,19 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="Format PDF">
-      <change afterPath="$PROJECT_DIR$/app/db.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/models.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docker-compose.yml" afterDir="false" />
+    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="Add unified test_order.py. &#10;Fixed BD">
+      <change afterPath="$PROJECT_DIR$/alembic/versions/b123456789ab_add_comments_and_reminders.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/bot/handlers/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/bot/handlers/callbacks.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/bot/handlers/commands.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/bot/main.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/bot/services/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/bot/services/message_builder.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/bot/services/reminder_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/bot/keyboards.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/bot/keyboards.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -24,6 +31,11 @@
     </option>
   </component>
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="master" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="GitHubPullRequestSearchHistory">{
@@ -35,7 +47,7 @@
   <component name="GithubPullRequestsUISettings">{
   &quot;selectedUrlAndAccountId&quot;: {
     &quot;url&quot;: &quot;https://github.com/NaturesProfit7/Shopify_Order_Notifier.git&quot;,
-    &quot;accountId&quot;: &quot;d28f635c-a6db-4a2e-aea7-62873f76b334&quot;
+    &quot;accountId&quot;: &quot;6c39b67b-2a0b-4491-af3e-f7ad7e8f17df&quot;
   }
 }</component>
   <component name="ProjectColorInfo">{
@@ -49,26 +61,36 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "master",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "reference.settingsdialog.project.grazie",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;claude&quot;,
+    &quot;last_opened_file_path&quot;: &quot;G:/Github Repositories/Shopify_Order_Notifier111&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;reference.settingsdialog.project.grazie&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="G:\Github Repositories\Shopify_Order_Notifier111" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="G:\Github Repositories\Shopify_Order_Notifier" />
+      <recent name="G:\Github Repositories\Shopify_Order_Notifier\app\bot\routers" />
+    </key>
+  </component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-python-sdk-7e47963ff851-f0eec537fc84-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-252.23892.515" />
+        <option value="bundled-python-sdk-e0ed3721d81e-36ea0e71a18c-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-251.25410.159" />
       </set>
     </attachedChunks>
   </component>
@@ -137,7 +159,31 @@
       <option name="project" value="LOCAL" />
       <updated>1755465576866</updated>
     </task>
-    <option name="localTasksCounter" value="8" />
+    <task id="LOCAL-00008" summary="Add DB. Migration">
+      <option name="closed" value="true" />
+      <created>1755472601354</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1755472601354</updated>
+    </task>
+    <task id="LOCAL-00009" summary="Test">
+      <option name="closed" value="true" />
+      <created>1755594166148</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1755594166148</updated>
+    </task>
+    <task id="LOCAL-00010" summary="Add unified test_order.py. &#10;Fixed BD">
+      <option name="closed" value="true" />
+      <created>1755696423161</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1755696423161</updated>
+    </task>
+    <option name="localTasksCounter" value="11" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -151,6 +197,9 @@
     <MESSAGE value="Fixed message_templates.py" />
     <MESSAGE value="Add real Shopify API, redo VCF order number" />
     <MESSAGE value="Format PDF" />
-    <option name="LAST_COMMIT_MESSAGE" value="Format PDF" />
+    <MESSAGE value="Add DB. Migration" />
+    <MESSAGE value="Test" />
+    <MESSAGE value="Add unified test_order.py. &#10;Fixed BD" />
+    <option name="LAST_COMMIT_MESSAGE" value="Add unified test_order.py. &#10;Fixed BD" />
   </component>
 </project>
