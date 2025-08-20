@@ -87,3 +87,47 @@ def send_text_with_buttons(message: str, buttons: list[list[dict]]):
         raise RuntimeError(f"Telegram API error: {resp.text}")
 
     return resp.json()
+
+
+def edit_message_text(chat_id: int | str, message_id: int, text: str,
+                      buttons: list[list[dict]] | None = None):
+    """Редактирование текста сообщения с опциональными кнопками."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set in .env")
+
+    url = f"https://api.telegram.org/bot{token}/editMessageText"
+    payload: dict[str, object] = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+    if buttons:
+        payload["reply_markup"] = json.dumps({"inline_keyboard": buttons})
+
+    resp = requests.post(url, json=payload, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Telegram API error: {resp.text}")
+    return resp.json()
+
+
+def answer_callback_query(callback_query_id: str, text: str | None = None,
+                          show_alert: bool = False):
+    """Ответ на callback query"""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set in .env")
+
+    url = f"https://api.telegram.org/bot{token}/answerCallbackQuery"
+    payload: dict[str, object] = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = text
+    if show_alert:
+        payload["show_alert"] = True
+
+    resp = requests.post(url, data=payload, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Telegram API error: {resp.text}")
+    return resp.json()
+
