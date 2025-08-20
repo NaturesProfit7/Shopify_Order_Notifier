@@ -7,8 +7,8 @@ Button = dict
 def main_menu_buttons() -> List[List[Button]]:
     """Главное меню"""
     return [
-        [{"text": "Очікують", "callback_data": "orders:list:pending:offset=0"}],
-        [{"text": "Всі", "callback_data": "orders:list:all:offset=0"}],
+        [{"text": "📋 Необработанные", "callback_data": "orders:list:pending:offset=0"}],
+        [{"text": "📦 Все заказы", "callback_data": "orders:list:all:offset=0"}],
     ]
 
 

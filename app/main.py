@@ -17,7 +17,7 @@ from app.services.tg_service import (
     edit_message_text,
 )
 from app.services.status_ui import status_title, buttons_for_status
-from app.services.menu_ui import orders_list_buttons, order_card_buttons
+from app.services.menu_ui import orders_list_buttons, order_card_buttons, main_menu_buttons
 from app.callbacks import route_callback
 
 from app.bot.main import start_bot, stop_bot, get_bot
@@ -111,6 +111,14 @@ def _display_order_number(order: dict, fallback_id: int | str) -> str:
 
 @app.get("/health")
 def health():
+    return {"status": "ok"}
+
+
+@app.get("/menu")
+def show_menu():
+    """Отправить главное меню в Telegram"""
+    buttons = main_menu_buttons()
+    send_text_with_buttons("Главное меню", buttons)
     return {"status": "ok"}
 
 
