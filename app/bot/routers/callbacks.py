@@ -12,8 +12,6 @@ from app.bot.texts import build_manager_message  # см. ниже "texts.py" (б
 
 from app.bot.services.message_builder import get_status_emoji
 from app.services.menu_ui import orders_list_buttons
-=======
-
 from app.services.tg_service import edit_message_text, send_text_with_buttons
 
 router = Router()
@@ -23,7 +21,11 @@ def _parse_cbdata(data: str):
     parts = data.split(":")
     if len(parts) != 4 or parts[0] != "order" or parts[2] != "set":
         return None, None
-    return int(parts[1]), parts[3]
+    try:
+        order_id = int(parts[1])
+    except ValueError:
+        return None, None
+    return order_id, parts[3]
 
 @router.callback_query(F.data.regexp(r"^order:\d+:view$"))
 async def on_order_view_click(cb: CallbackQuery):
@@ -45,7 +47,7 @@ async def on_order_view_click(cb: CallbackQuery):
 @router.callback_query(F.data.regexp(r"^order:\d+:set:"))
 async def on_order_status_click(cb: CallbackQuery):
     order_id, status_str = _parse_cbdata(cb.data)
-    if not order_id or not status_str:
+    if order_id is None or status_str is None:
         await cb.answer("Некоректні дані", show_alert=False)
         return
 
