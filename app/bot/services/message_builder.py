@@ -1,6 +1,5 @@
 # app/bot/services/message_builder.py
 from app.models import Order, OrderStatus
-from app.services.phone_utils import pretty_ua_phone
 
 
 def get_status_emoji(status: OrderStatus) -> str:
@@ -23,9 +22,18 @@ def get_status_text(status: OrderStatus) -> str:
     }[status]
 
 
-def build_order_message(order: Order, detailed: bool = False) -> str:
-    """Построить сообщение о заказе"""
+def format_phone_compact(e164: str) -> str:
+    """Форматирует телефон компактно без пробелов"""
+    if not e164:
+        return "Не вказано"
+    return e164  # Просто E.164 без изменений: +380960790247
 
+
+def build_order_message(order: Order, detailed: bool = False) -> str:
+    """
+    Построить сообщение о заказе в едином формате.
+    Используется как для новых заказов, так и для карточек из списка.
+    """
     order_no = order.order_number or order.id
     status_emoji = get_status_emoji(order.status)
     status_text = get_status_text(order.status)
@@ -33,51 +41,43 @@ def build_order_message(order: Order, detailed: bool = False) -> str:
     # Имя клиента
     customer_name = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
 
-    # Телефон
-    phone = pretty_ua_phone(order.customer_phone_e164) if order.customer_phone_e164 else "Не вказано"
+    # Телефон БЕЗ пробелов
+    phone = format_phone_compact(order.customer_phone_e164)
 
     # Основное сообщение
-    message = f"""
-📦 <b>Замовлення #{order_no}</b> • {status_emoji} {status_text}
+    message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} {status_text}
 ━━━━━━━━━━━━━━━━━━━━━━
-👤 <b>{customer_name}</b>
-📱 {phone}
-"""
+👤 {customer_name}
+📱 {phone}"""
 
-    # Если есть комментарий
-    if order.comment:
-        message += f"\n💬 <i>Коментар: {order.comment}</i>\n"
-
-    # Если установлено напоминание
-    if order.reminder_at:
-        from datetime import datetime
-        reminder_time = order.reminder_at.strftime("%d.%m %H:%M")
-        message += f"\n⏰ <i>Нагадування: {reminder_time}</i>\n"
-
-    # Сообщение для клиента
+    # Сообщение для клиента (всегда показываем)
     message += f"""
 ━━━━━━━━━━━━━━━━━━━━━━
 💬 <b>Повідомлення клієнту:</b>
 <i>Вітаю, {order.customer_first_name or 'клієнте'} ☺️
 Ваше замовлення №{order_no}
-Все вірно?</i>
-"""
+Все вірно?</i>"""
 
-    # Если нужна детальная информация
+    # Детальная информация (если запрошено и есть данные)
     if detailed and order.raw_json:
         data = order.raw_json
+
+        message += "\n━━━━━━━━━━━━━━━━━━━━━━"
 
         # Товары
         items = data.get("line_items", [])
         if items:
-            message += "\n━━━━━━━━━━━━━━━━━━━━━━\n🛍 <b>Товари:</b>\n"
+            message += "\n🛍 <b>Товари:</b>"
+            total_sum = 0
             for item in items[:5]:  # Показываем первые 5
                 title = item.get("title", "")
                 qty = item.get("quantity", 0)
-                price = item.get("price", "0")
-                message += f"• {title} x{qty} - {price} UAH\n"
+                price = float(item.get("price", 0))
+                total_sum += price * qty
+                message += f"\n• {title} x{qty} - {price:.2f} UAH"
+
             if len(items) > 5:
-                message += f"<i>...та ще {len(items) - 5} товарів</i>\n"
+                message += f"\n<i>...та ще {len(items) - 5} товарів</i>"
 
         # Доставка
         shipping = data.get("shipping_address", {})
@@ -85,19 +85,27 @@ def build_order_message(order: Order, detailed: bool = False) -> str:
             city = shipping.get("city", "")
             address = shipping.get("address1", "")
             if city or address:
-                message += f"\n📍 <b>Доставка:</b> {city}, {address}\n"
+                delivery_parts = [p for p in [city, address] if p]
+                message += f"\n📍 <b>Доставка:</b> {', '.join(delivery_parts)}"
 
         # Сумма
         total = data.get("total_price", "")
+        currency = data.get("currency", "UAH")
         if total:
-            message += f"\n💰 <b>Сума:</b> {total} UAH\n"
+            message += f"\n💰 <b>Сума:</b> {total} {currency}"
 
-    # Информация о менеджере
-    if order.processed_by_username:
-        message += f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
-        message += f"👨‍💼 Менеджер: @{order.processed_by_username}\n"
-        if order.updated_at:
-            update_time = order.updated_at.strftime("%d.%m %H:%M")
-            message += f"🕐 Оновлено: {update_time}\n"
+    # Дополнительная информация (если есть)
+    if order.comment or order.reminder_at or order.processed_by_username:
+        message += "\n━━━━━━━━━━━━━━━━━━━━━━"
+
+        if order.comment:
+            message += f"\n💬 <i>Коментар: {order.comment}</i>"
+
+        if order.reminder_at:
+            reminder_time = order.reminder_at.strftime("%d.%m %H:%M")
+            message += f"\n⏰ <i>Нагадування: {reminder_time}</i>"
+
+        if order.processed_by_username:
+            message += f"\n👨‍💼 <i>Менеджер: @{order.processed_by_username}</i>"
 
     return message

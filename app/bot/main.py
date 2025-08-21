@@ -2,6 +2,7 @@
 import asyncio
 import os
 from datetime import datetime, timedelta
+from typing import Optional
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -18,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramBot:
-    _instance = None
+    """Singleton класс для управления Telegram ботом"""
+    _instance: Optional['TelegramBot'] = None
+    _lock = asyncio.Lock()
 
     def __new__(cls):
         if cls._instance is None:
@@ -38,6 +41,9 @@ class TelegramBot:
         self.scheduler = AsyncIOScheduler(timezone="Europe/Kyiv")
         self.chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
 
+        # Polling task
+        self.polling_task: Optional[asyncio.Task] = None
+
         # Список разрешенных менеджеров
         allowed_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")
         self.allowed_user_ids = [int(uid.strip()) for uid in allowed_ids.split(",") if uid.strip()]
@@ -49,11 +55,13 @@ class TelegramBot:
         self._setup_scheduler()
 
         self.initialized = True
+        logger.info("TelegramBot initialized")
 
     def _register_handlers(self):
         """Регистрация всех хендлеров"""
         self.dp.include_router(commands.router)
         self.dp.include_router(callbacks.router)
+        logger.info("Handlers registered")
 
     def _setup_scheduler(self):
         """Настройка планировщика задач"""
@@ -72,6 +80,7 @@ class TelegramBot:
             id="check_reminders",
             replace_existing=True
         )
+        logger.info("Scheduler configured")
 
     async def _check_unprocessed_orders(self):
         """Проверка необработанных заказов"""
@@ -83,15 +92,23 @@ class TelegramBot:
                     Order.status == OrderStatus.NEW,
                     Order.created_at < threshold,
                     (Order.last_reminder_sent.is_(None)) |
-                    (Order.last_reminder_sent < datetime.utcnow() - timedelta(minutes=30))
-                ).all()
+                    (Order.last_reminder_sent < datetime.utcnow() - timedelta(hours=2))
+                ).limit(5).all()
 
-                if unprocessed:
-                    message = "⚠️ <b>Необроблені замовлення:</b>\n\n"
+                if unprocessed and self.chat_id:
+                    message = "⚠️ <b>Необроблені замовлення (30+ хв):</b>\n\n"
                     for order in unprocessed:
                         order_no = order.order_number or order.id
                         customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip()
-                        message += f"• №{order_no} - {customer or 'Без імені'}\n"
+                        elapsed = datetime.utcnow() - order.created_at
+                        hours = int(elapsed.total_seconds() // 3600)
+                        minutes = int((elapsed.total_seconds() % 3600) // 60)
+
+                        message += f"• №{order_no} - {customer or 'Без імені'}"
+                        if hours > 0:
+                            message += f" ({hours}г {minutes}хв тому)\n"
+                        else:
+                            message += f" ({minutes}хв тому)\n"
 
                         # Обновляем время последнего напоминания
                         order.last_reminder_sent = datetime.utcnow()
@@ -100,9 +117,10 @@ class TelegramBot:
 
                     # Отправляем уведомление
                     await self.bot.send_message(self.chat_id, message)
+                    logger.info(f"Sent reminder for {len(unprocessed)} unprocessed orders")
 
         except Exception as e:
-            logger.error(f"Error checking unprocessed orders: {e}")
+            logger.error(f"Error checking unprocessed orders: {e}", exc_info=True)
 
     async def _check_reminders(self):
         """Проверка напоминаний о перезвоне"""
@@ -112,84 +130,141 @@ class TelegramBot:
                 reminders = session.query(Order).filter(
                     Order.reminder_at.isnot(None),
                     Order.reminder_at <= now
-                ).all()
+                ).limit(10).all()
 
                 for order in reminders:
-                    order_no = order.order_number or order.id
-                    customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip()
-                    phone = order.customer_phone_e164 or "Телефон відсутній"
+                    try:
+                        order_no = order.order_number or order.id
+                        customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip()
 
-                    message = (
-                        f"🔔 <b>Нагадування про дзвінок!</b>\n\n"
-                        f"Замовлення №{order_no}\n"
-                        f"Клієнт: {customer or 'Без імені'}\n"
-                        f"Телефон: {phone}"
-                    )
+                        from app.services.phone_utils import pretty_ua_phone
+                        phone = pretty_ua_phone(
+                            order.customer_phone_e164) if order.customer_phone_e164 else "Телефон відсутній"
 
-                    if order.comment:
-                        message += f"\n\n💬 Коментар: {order.comment}"
+                        message = (
+                            f"🔔 <b>Нагадування про дзвінок!</b>\n\n"
+                            f"📦 Замовлення №{order_no}\n"
+                            f"👤 Клієнт: {customer or 'Без імені'}\n"
+                            f"📱 Телефон: {phone}"
+                        )
 
-                    # Отправляем напоминание
-                    await self.bot.send_message(self.chat_id, message)
+                        if order.comment:
+                            message += f"\n💬 Коментар: <i>{order.comment}</i>"
 
-                    # Очищаем напоминание
-                    order.reminder_at = None
-                    session.commit()
+                        # Отправляем напоминание
+                        if self.chat_id:
+                            await self.bot.send_message(self.chat_id, message)
+                            logger.info(f"Sent reminder for order {order_no}")
+
+                        # Очищаем напоминание
+                        order.reminder_at = None
+
+                    except Exception as e:
+                        logger.error(f"Error sending reminder for order {order.id}: {e}")
+
+                session.commit()
 
         except Exception as e:
-            logger.error(f"Error checking reminders: {e}")
+            logger.error(f"Error checking reminders: {e}", exc_info=True)
+
+    async def start_polling(self):
+        """Запуск polling в фоновой задаче"""
+        try:
+            logger.info("Starting bot polling...")
+
+            # Запускаем планировщик
+            if not self.scheduler.running:
+                self.scheduler.start()
+                logger.info("Scheduler started")
+
+            # Запускаем polling
+            await self.dp.start_polling(self.bot, allowed_updates=['message', 'callback_query'])
+
+        except Exception as e:
+            logger.error(f"Error in bot polling: {e}", exc_info=True)
+            raise
 
     async def start(self):
-        """Запуск бота"""
-        logger.info("Starting Telegram bot...")
+        """Запуск бота в фоне (non-blocking)"""
+        async with self._lock:
+            if self.polling_task and not self.polling_task.done():
+                logger.warning("Bot is already running")
+                return
 
-        # Запускаем планировщик
-        self.scheduler.start()
+            # Создаем фоновую задачу для polling
+            self.polling_task = asyncio.create_task(self.start_polling())
+            logger.info("Bot polling task created")
 
-        # Запускаем polling
-        await self.dp.start_polling(self.bot)
+            # Даем время на инициализацию
+            await asyncio.sleep(1)
+
+            # Проверяем, что бот запустился
+            try:
+                me = await self.bot.get_me()
+                logger.info(f"Bot started successfully: @{me.username}")
+            except Exception as e:
+                logger.error(f"Failed to start bot: {e}")
+                if self.polling_task:
+                    self.polling_task.cancel()
+                raise
 
     async def stop(self):
         """Остановка бота"""
-        logger.info("Stopping Telegram bot...")
+        async with self._lock:
+            logger.info("Stopping Telegram bot...")
 
-        # Останавливаем планировщик
-        self.scheduler.shutdown(wait=True)
+            try:
+                # Останавливаем polling
+                if self.polling_task and not self.polling_task.done():
+                    self.polling_task.cancel()
+                    try:
+                        await self.polling_task
+                    except asyncio.CancelledError:
+                        pass
 
-        # Останавливаем polling
-        await self.dp.stop_polling()
+                # Останавливаем диспетчер
+                await self.dp.stop_polling()
 
-        # Закрываем соединение бота
-        await self.bot.session.close()
+                # Останавливаем планировщик
+                if self.scheduler.running:
+                    self.scheduler.shutdown(wait=False)
+
+                # Закрываем сессию бота
+                await self.bot.session.close()
+
+                logger.info("Bot stopped successfully")
+
+            except Exception as e:
+                logger.error(f"Error stopping bot: {e}", exc_info=True)
 
 
 # Глобальный экземпляр бота
-bot_instance: TelegramBot = None
+_bot_instance: Optional[TelegramBot] = None
 
 
 def get_bot_instance() -> TelegramBot:
     """Получить или создать экземпляр бота"""
-    global bot_instance
-    if bot_instance is None:
-        bot_instance = TelegramBot()
-    return bot_instance
+    global _bot_instance
+    if _bot_instance is None:
+        _bot_instance = TelegramBot()
+    return _bot_instance
 
 
 async def start_bot():
-    """Функция для запуска бота из FastAPI"""
+    """Функция для запуска бота из FastAPI lifespan"""
     bot = get_bot_instance()
     await bot.start()
 
 
 async def stop_bot():
     """Функция для остановки бота"""
-    global bot_instance
-    if bot_instance:
-        await bot_instance.stop()
-        bot_instance = None
+    global _bot_instance
+    if _bot_instance:
+        await _bot_instance.stop()
+        _bot_instance = None
 
 
-def get_bot() -> Bot:
+def get_bot() -> Optional[Bot]:
     """Получить экземпляр Bot для отправки сообщений"""
     instance = get_bot_instance()
     return instance.bot if instance else None

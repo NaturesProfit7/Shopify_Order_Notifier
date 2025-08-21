@@ -16,9 +16,6 @@ from app.services.tg_service import (
     answer_callback_query,
     edit_message_text,
 )
-from app.services.status_ui import status_title, buttons_for_status
-from app.services.menu_ui import orders_list_buttons, order_card_buttons, main_menu_buttons
-from app.callbacks import route_callback
 
 from app.bot.main import start_bot, stop_bot, get_bot
 from app.bot.services.message_builder import build_order_message
@@ -114,55 +111,48 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/menu")
-def show_menu():
-    """Отправить главное меню в Telegram"""
-    buttons = main_menu_buttons()
-    send_text_with_buttons("Главное меню", buttons)
-    return {"status": "ok"}
-
-
 @app.post("/webhooks/shopify/orders")
 async def shopify_webhook(request: Request):
+    """Обработчик webhook от Shopify - финальная версия"""
     logger.info("=== WEBHOOK RECEIVED ===")
 
-    # 1) Сырые байты тела (для HMAC)
+    # 1) Получаем и валидируем данные
     raw_body = await request.body()
     logger.info(f"Body size: {len(raw_body)} bytes")
 
-    # 2) Валидация подписи Shopify
+    # Валидация HMAC
     hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
     secret = get_shopify_webhook_secret()
     digest = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).digest()
     computed_hmac = base64.b64encode(digest).decode("utf-8")
 
     if not hmac.compare_digest(computed_hmac, hmac_header or ""):
-        logger.error(f"HMAC mismatch! Expected: {computed_hmac[:20]}..., Got: {(hmac_header or '')[:20]}...")
+        logger.error(f"HMAC mismatch!")
         raise HTTPException(status_code=403, detail="Invalid HMAC signature")
 
     logger.info("HMAC validation passed")
 
-    # 3) Парсим JSON
+    # Парсим JSON
     try:
         event = json.loads(raw_body)
     except json.JSONDecodeError as e:
         logger.error(f"JSON decode error: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    # 4) order_id
+    # Получаем order_id
     order_id = event.get("id") or event.get("order_id")
     if order_id is None:
         logger.error("No order_id in event")
-        raise HTTPException(status_code=400, detail="order_id is missing in event")
+        raise HTTPException(status_code=400, detail="order_id is missing")
 
     logger.info(f"Processing order_id: {order_id}")
 
-    # 5) Идемпотентность через БД
+    # 2) Проверяем идемпотентность
     if await is_processed(order_id):
         log_event("webhook_duplicate", order_id=str(order_id))
         return {"status": "duplicate", "order_id": str(order_id)}
 
-    # 6) Тянем полный заказ из Shopify
+    # 3) Получаем полные данные заказа из Shopify
     try:
         logger.info(f"Fetching full order {order_id} from Shopify...")
         order_full = get_order(order_id)
@@ -173,14 +163,14 @@ async def shopify_webhook(request: Request):
         log_event("shopify_get_order_err", order_id=str(order_id), error=str(e))
         raise HTTPException(status_code=502, detail="Failed to fetch order from Shopify")
 
-    # 7) Помечаем как обработанный в БД
+    # 4) Помечаем как обработанный
     logger.info(f"Marking order {order_id} as processed...")
     marked = await mark_processed(order_id, order_full)
     if not marked:
         log_event("webhook_race_condition", order_id=str(order_id))
         return {"status": "duplicate", "order_id": str(order_id)}
 
-    # Извлекаем данные
+    # 5) Извлекаем данные
     first_name, last_name = _extract_customer_name(order_full)
     phone_raw = _extract_phone(order_full)
     phone_e164 = normalize_ua_phone(phone_raw)
@@ -192,9 +182,7 @@ async def shopify_webhook(request: Request):
         logger.error("TELEGRAM_TARGET_CHAT_ID not set!")
         raise HTTPException(status_code=500, detail="Telegram chat ID not configured")
 
-    await update_telegram_info(order_id, chat_id=chat_id)
-
-    # Генерируем файлы
+    # 6) Генерируем файлы
     logger.info("Generating PDF and VCF files...")
     pdf_bytes, pdf_filename = build_order_pdf(order_full)
     vcf_bytes, vcf_filename = build_contact_vcf(
@@ -204,206 +192,85 @@ async def shopify_webhook(request: Request):
         phone_e164=phone_e164,
         embed_order_in_n=True,
     )
-    logger.info(f"Files generated: {pdf_filename}, {vcf_filename}")
 
-    # Пытаемся отправить через aiogram бота
+    # 7) Отправляем через aiogram бота
     bot = get_bot()
-    logger.info(f"Bot instance: {bot is not None}")
+    if not bot:
+        logger.error("Bot instance not available!")
+        raise HTTPException(status_code=500, detail="Bot not initialized")
 
-    sent_via_bot = False
+    try:
+        from aiogram.types import BufferedInputFile
+        from app.bot.keyboards import get_order_keyboard
+        from app.bot.services.message_builder import build_order_message
 
-    if bot and chat_id:
-        try:
-            logger.info("Attempting to send via aiogram bot...")
-            # Получаем объект заказа из БД для построения сообщения
-            with get_session() as session:
-                order_obj = session.get(Order, order_id)
-                if order_obj:
-                    message_text = build_order_message(order_obj)
-                    keyboard = get_order_keyboard(order_obj)
+        chat_id_int = int(chat_id)
 
-                    # Отправляем файлы и сообщение через aiogram
-                    from aiogram.types import BufferedInputFile
+        # Получаем объект заказа из БД
+        with get_session() as session:
+            order_obj = session.get(Order, order_id)
+            if not order_obj:
+                logger.error(f"Order {order_id} not found in DB after processing")
+                raise HTTPException(status_code=500, detail="Database error")
 
-                    # 1. Отправляем PDF
-                    pdf_caption = f"📦 Замовлення #{pretty_order_no} • {first_name} {last_name}".strip()
-                    logger.info(f"Sending PDF to chat {chat_id}...")
-                    await bot.send_document(
-                        chat_id=int(chat_id),  # Важно: преобразуем в int
-                        document=BufferedInputFile(pdf_bytes, pdf_filename),
-                        caption=pdf_caption
-                    )
-                    logger.info("PDF sent successfully")
+            # Строим красивое сообщение
+            message_text = build_order_message(order_obj, detailed=True)
+            keyboard = get_order_keyboard(order_obj)
 
-                    # 2. Отправляем VCF
-                    vcf_caption = "Контакт клієнта (vCard)"
-                    if phone_e164:
-                        vcf_caption += f"\n{pretty_ua_phone(phone_e164)}"
-                    else:
-                        vcf_caption += "\n⚠️ Номер потребує перевірки"
+            # 1. Отправляем PDF
+            pdf_file = BufferedInputFile(pdf_bytes, pdf_filename)
+            pdf_caption = f"📦 Замовлення #{pretty_order_no}"
+            if first_name or last_name:
+                pdf_caption += f" • {first_name} {last_name}".strip()
 
-                    logger.info(f"Sending VCF to chat {chat_id}...")
-                    await bot.send_document(
-                        chat_id=int(chat_id),  # Важно: преобразуем в int
-                        document=BufferedInputFile(vcf_bytes, vcf_filename),
-                        caption=vcf_caption
-                    )
-                    logger.info("VCF sent successfully")
+            logger.info(f"Sending PDF to chat {chat_id}")
+            await bot.send_document(
+                chat_id=chat_id_int,
+                document=pdf_file,
+                caption=pdf_caption
+            )
+            logger.info("PDF sent successfully")
 
-                    # 3. Отправляем сообщение с кнопками
-                    logger.info(f"Sending message with buttons to chat {chat_id}...")
-                    button_message = await bot.send_message(
-                        chat_id=int(chat_id),  # Важно: преобразуем в int
-                        text=message_text,
-                        reply_markup=keyboard
-                    )
-                    logger.info(f"Message sent, id: {button_message.message_id}")
-
-                    # Сохраняем ID сообщения с кнопками
-                    await update_telegram_info(order_id, message_id=button_message.message_id)
-
-                    sent_via_bot = True
-                    log_event("telegram_sent_via_bot", order_id=str(order_id), status="ok")
-                else:
-                    logger.error(f"Order {order_id} not found in DB")
-
-        except Exception as e:
-            logger.error(f"Failed to send via bot: {e}", exc_info=True)
-            log_event("bot_send_error", order_id=str(order_id), error=str(e))
-            sent_via_bot = False
-    else:
-        logger.warning(f"Bot not available or chat_id not set. Bot: {bot}, chat_id: {chat_id}")
-
-    # Если не удалось отправить через бота, используем старый метод
-    if not sent_via_bot:
-        try:
-            logger.info("Fallback to legacy HTTP API method...")
-
-            # Отправляем PDF
-            pdf_caption = f"Замовлення #{pretty_order_no} • {(first_name + ' ' + last_name).strip()}".strip()
-            logger.info("Sending PDF via HTTP API...")
-            send_file(pdf_bytes, pdf_filename, caption=pdf_caption)
-            log_event("pdf_sent_legacy", order_id=str(order_id), status="ok")
-
-            # Отправляем VCF
-            vcf_caption = "Контакт клієнта (vCard)"
+            # 2. Отправляем VCF
+            vcf_file = BufferedInputFile(vcf_bytes, vcf_filename)
+            vcf_caption = "📱 Контакт клієнта"
             if phone_e164:
-                vcf_caption += f"\n{pretty_ua_phone(phone_e164)}"
+                # Телефон без пробелов
+                vcf_caption += f" • {phone_e164}"
             else:
-                vcf_caption += "\n⚠️ Номер потребує перевірки"
+                vcf_caption += " • ⚠️ Номер потребує перевірки"
 
-            logger.info("Sending VCF via HTTP API...")
-            send_file(vcf_bytes, vcf_filename, caption=vcf_caption)
-            log_event("vcf_sent_legacy", order_id=str(order_id), status="ok")
+            logger.info(f"Sending VCF to chat {chat_id}")
+            await bot.send_document(
+                chat_id=chat_id_int,
+                document=vcf_file,
+                caption=vcf_caption
+            )
+            logger.info("VCF sent successfully")
 
-            # Отправляем текст с кнопками через HTTP API
-            with get_session() as session:
-                order_obj = session.get(Order, order_id)
-                if order_obj:
-                    message_text = build_order_message(order_obj)
-                    keyboard = get_order_keyboard(order_obj)
+            # 3. Отправляем сообщение с кнопками
+            logger.info(f"Sending message with buttons")
+            button_message = await bot.send_message(
+                chat_id=chat_id_int,
+                text=message_text,
+                reply_markup=keyboard
+            )
 
-                    # Преобразуем клавиатуру aiogram в формат для HTTP API
-                    buttons_for_api = []
-                    if keyboard and keyboard.inline_keyboard:
-                        for row in keyboard.inline_keyboard:
-                            api_row = []
-                            for button in row:
-                                api_row.append({
-                                    "text": button.text,
-                                    "callback_data": button.callback_data
-                                })
-                            buttons_for_api.append(api_row)
+            # Сохраняем ID сообщения с кнопками
+            await update_telegram_info(
+                order_id,
+                chat_id=str(chat_id),
+                message_id=button_message.message_id
+            )
 
-                    logger.info("Sending message with buttons via HTTP API...")
-                    result = send_text_with_buttons(message_text, buttons_for_api)
+            logger.info(f"Message with buttons sent, id: {button_message.message_id}")
+            log_event("webhook_processed", order_id=str(order_id), status="success")
 
-                    # Сохраняем message_id
-                    if result and "result" in result:
-                        message_id = result["result"].get("message_id")
-                        if message_id:
-                            await update_telegram_info(order_id, message_id=message_id)
+    except Exception as e:
+        logger.error(f"Failed to send via bot: {e}", exc_info=True)
+        log_event("bot_send_error", order_id=str(order_id), error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to send to Telegram")
 
-                    log_event("text_sent_legacy", order_id=str(order_id), status="ok")
-                    logger.info("All messages sent via legacy method")
-
-        except Exception as e:
-            logger.error(f"Failed to send via legacy method: {e}", exc_info=True)
-            log_event("legacy_send_error", order_id=str(order_id), error=str(e))
-            raise HTTPException(status_code=500, detail="Failed to send to Telegram")
-
-    log_event("webhook_processed", order_id=str(order_id))
     logger.info(f"=== WEBHOOK PROCESSED SUCCESSFULLY for order {order_id} ===")
     return {"status": "ok", "order_id": str(order_id)}
 
-
-@app.post("/tg/webhook")
-async def telegram_webhook(request: Request):
-    """Webhook для обработки callback_query из Telegram"""
-    data = await request.json()
-    cb = data.get("callback_query") if isinstance(data, dict) else None
-    if not cb:
-        return {"ok": True}
-
-    action, params = route_callback(cb.get("data", ""))
-    cb_id = cb.get("id")
-    if not action:
-        if cb_id:
-            answer_callback_query(cb_id, "Невірні дані кнопки")
-        return {"ok": False}
-
-    chat_id = (cb.get("message", {}).get("chat", {}) or {}).get("id")
-    message_id = cb.get("message", {}).get("message_id")
-
-    if action == "order_set":
-        order_id = params.get("order_id")
-        status_str = params.get("status")
-        try:
-            new_status = OrderStatus(status_str)
-        except Exception:
-            answer_callback_query(cb_id, "Невірні дані кнопки")
-            return {"ok": False}
-
-        with get_session() as s:
-            db = s.get(Order, order_id)
-            if not db:
-                answer_callback_query(cb_id, "Замовлення не знайдено")
-                return {"ok": False}
-            db.status = new_status
-            s.commit()
-            new_text = build_order_message(db)
-            buttons = buttons_for_status(new_status, order_id)
-
-        if chat_id and message_id:
-            edit_message_text(chat_id, message_id, new_text, buttons)
-        answer_callback_query(cb_id, f"Статус → {status_title(new_status)}")
-        return {"ok": True}
-
-    if action == "orders_list":
-        kind = params.get("kind", "all")
-        offset = int(params.get("offset", 0))
-        buttons = orders_list_buttons(
-            kind,
-            offset,
-            page_size=10,
-            has_prev=offset > 0,
-            has_next=True,
-        )
-        current_page = offset // 10 + 1
-        send_text_with_buttons(f"Список замовлень ({kind}) {current_page}/1", buttons)
-        answer_callback_query(cb_id)
-        return {"ok": True}
-
-    if action == "order_view":
-        order_id = params.get("order_id")
-        buttons = order_card_buttons(order_id)
-        send_text_with_buttons(f"Картка замовлення #{order_id}", buttons)
-        answer_callback_query(cb_id)
-        return {"ok": True}
-
-    if action == "order_resend":
-        answer_callback_query(cb_id, "Поки не реалізовано")
-        return {"ok": True}
-
-    answer_callback_query(cb_id, "Невірні дані кнопки")
-    return {"ok": False}
