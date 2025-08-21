@@ -16,7 +16,16 @@ async def on_start(msg: Message):
 
 @router.message(Command(commands=["menu"]))
 async def on_menu(msg: Message):
-    """Show main menu buttons."""
-    result = send_text_with_buttons("Главное меню", main_menu_buttons())
-    if asyncio.iscoroutine(result):
-        await result
+    """Показать главное меню"""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    buttons = [
+        [InlineKeyboardButton(text="📋 Необроблені", callback_data="orders:list:pending:offset=0")],
+        [InlineKeyboardButton(text="📦 Всі замовлення", callback_data="orders:list:all:offset=0")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="stats:show")]
+    ]
+
+    await msg.answer(
+        "🏠 <b>Головне меню</b>\n\nОберіть дію:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
