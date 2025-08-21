@@ -65,22 +65,86 @@ class TelegramBot:
 
     def _setup_scheduler(self):
         """Настройка планировщика задач"""
-        # Проверка необработанных заказов каждые 30 минут
+        # Проверка НОВЫХ заказов КАЖДЫЙ ЧАС
         self.scheduler.add_job(
-            self._check_unprocessed_orders,
-            trigger=IntervalTrigger(minutes=30),
-            id="check_unprocessed",
+            self._check_new_orders,
+            trigger=IntervalTrigger(hours=1),  # Изменено с 30 минут на 1 час
+            id="check_new_orders",
             replace_existing=True
         )
 
-        # Проверка напоминаний каждые 5 минут
+        # Проверка напоминаний каждые 5 минут (оставляем как есть)
         self.scheduler.add_job(
             self._check_reminders,
             trigger=IntervalTrigger(minutes=5),
             id="check_reminders",
             replace_existing=True
         )
-        logger.info("Scheduler configured")
+        logger.info("Scheduler configured: check new orders every hour, check reminders every 5 min")
+
+    async def _check_new_orders(self):
+        """Проверка заказов в статусе NEW - каждый час"""
+        try:
+            with get_session() as session:
+                # Находим ВСЕ заказы в статусе NEW
+                new_orders = session.query(Order).filter(
+                    Order.status == OrderStatus.NEW
+                ).order_by(Order.created_at.desc()).all()
+
+                # Если нет новых заказов - не отправляем уведомление
+                if not new_orders or not self.chat_id:
+                    return
+
+                # Формируем сообщение
+                message = f"🆕 <b>Необроблені замовлення ({len(new_orders)} шт):</b>\n\n"
+
+                for order in new_orders[:10]:  # Показываем первые 10
+                    order_no = order.order_number or order.id
+                    customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
+
+                    # Рассчитываем время с момента создания
+                    elapsed = datetime.utcnow() - order.created_at
+                    hours = int(elapsed.total_seconds() // 3600)
+                    minutes = int((elapsed.total_seconds() % 3600) // 60)
+
+                    # Добавляем индикатор срочности
+                    if hours >= 2:
+                        urgency = "🔥"  # Срочно - более 2 часов
+                    elif hours >= 1:
+                        urgency = "⚠️"  # Внимание - более часа
+                    else:
+                        urgency = "📍"  # Обычный
+
+                    message += f"{urgency} №{order_no} • {customer}"
+
+                    # Показываем время
+                    if hours > 0:
+                        message += f" ({hours}г {minutes}хв тому)\n"
+                    else:
+                        message += f" ({minutes}хв тому)\n"
+
+                if len(new_orders) > 10:
+                    message += f"\n<i>...та ще {len(new_orders) - 10} замовлень</i>\n"
+
+                # Добавляем кнопку для быстрого перехода
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text="📋 Переглянути необроблені",
+                        callback_data="orders:list:pending:offset=0"
+                    )
+                ]])
+
+                # Отправляем уведомление
+                await self.bot.send_message(
+                    self.chat_id,
+                    message,
+                    reply_markup=keyboard
+                )
+                logger.info(f"Sent hourly notification for {len(new_orders)} new orders")
+
+        except Exception as e:
+            logger.error(f"Error checking new orders: {e}", exc_info=True)
 
     async def _check_unprocessed_orders(self):
         """Проверка необработанных заказов"""
@@ -123,7 +187,7 @@ class TelegramBot:
             logger.error(f"Error checking unprocessed orders: {e}", exc_info=True)
 
     async def _check_reminders(self):
-        """Проверка напоминаний о перезвоне"""
+        """Проверка напоминаний о перезвоне - каждые 5 минут"""
         try:
             with get_session() as session:
                 now = datetime.utcnow()
@@ -135,25 +199,37 @@ class TelegramBot:
                 for order in reminders:
                     try:
                         order_no = order.order_number or order.id
-                        customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip()
+                        customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
 
-                        from app.services.phone_utils import pretty_ua_phone
-                        phone = pretty_ua_phone(
-                            order.customer_phone_e164) if order.customer_phone_e164 else "Телефон відсутній"
+                        # Форматируем телефон БЕЗ пробелов
+                        phone = order.customer_phone_e164 if order.customer_phone_e164 else "Телефон відсутній"
 
                         message = (
                             f"🔔 <b>Нагадування про дзвінок!</b>\n\n"
                             f"📦 Замовлення №{order_no}\n"
-                            f"👤 Клієнт: {customer or 'Без імені'}\n"
+                            f"👤 Клієнт: {customer}\n"
                             f"📱 Телефон: {phone}"
                         )
 
                         if order.comment:
                             message += f"\n💬 Коментар: <i>{order.comment}</i>"
 
+                        # Добавляем кнопку для перехода к заказу
+                        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                        keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+                            InlineKeyboardButton(
+                                text="📦 Відкрити замовлення",
+                                callback_data=f"order:{order.id}:view"
+                            )
+                        ]])
+
                         # Отправляем напоминание
                         if self.chat_id:
-                            await self.bot.send_message(self.chat_id, message)
+                            await self.bot.send_message(
+                                self.chat_id,
+                                message,
+                                reply_markup=keyboard
+                            )
                             logger.info(f"Sent reminder for order {order_no}")
 
                         # Очищаем напоминание

@@ -2,9 +2,10 @@
 import asyncio
 from datetime import datetime, timedelta
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.exceptions import TelegramBadRequest
 
 from app.db import get_session
 from app.models import Order, OrderStatus, OrderStatusHistory
@@ -33,7 +34,6 @@ def format_phone_compact(e164: str) -> str:
     """Форматирует телефон компактно без пробелов: +380960790247"""
     if not e164:
         return "Не вказано"
-    # Просто возвращаем E.164 без изменений
     return e164
 
 
@@ -132,7 +132,7 @@ def get_order_card_keyboard(order: Order) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order.id}:reminder")
         ])
 
-    # Кнопки для файлов (без "Оновити")
+    # Кнопки для файлов
     buttons.append([
         InlineKeyboardButton(text="📄 PDF", callback_data=f"order:{order.id}:resend:pdf"),
         InlineKeyboardButton(text="📱 VCF", callback_data=f"order:{order.id}:resend:vcf")
@@ -142,6 +142,27 @@ def get_order_card_keyboard(order: Order) -> InlineKeyboardMarkup:
     buttons.append([
         InlineKeyboardButton(text="↩️ До списку", callback_data=f"orders:list:pending:offset=0")
     ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_reminder_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура выбора времени напоминания"""
+    buttons = [
+        [
+            InlineKeyboardButton(text="15 хв", callback_data=f"reminder:{order_id}:15"),
+            InlineKeyboardButton(text="30 хв", callback_data=f"reminder:{order_id}:30"),
+            InlineKeyboardButton(text="1 год", callback_data=f"reminder:{order_id}:60")
+        ],
+        [
+            InlineKeyboardButton(text="2 год", callback_data=f"reminder:{order_id}:120"),
+            InlineKeyboardButton(text="4 год", callback_data=f"reminder:{order_id}:240"),
+            InlineKeyboardButton(text="Завтра", callback_data=f"reminder:{order_id}:1440")
+        ],
+        [
+            InlineKeyboardButton(text="↩️ Назад", callback_data=f"order:{order_id}:back")
+        ]
+    ]
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -166,6 +187,9 @@ async def on_order_view(callback: CallbackQuery):
                 message_text,
                 reply_markup=keyboard
             )
+        except TelegramBadRequest:
+            # Если сообщение не изменилось, просто отвечаем на callback
+            pass
         except Exception:
             await callback.message.answer(
                 message_text,
@@ -177,7 +201,7 @@ async def on_order_view(callback: CallbackQuery):
 
 @router.callback_query(F.data == "menu:main")
 async def on_main_menu(callback: CallbackQuery):
-    """Главное меню - ЕДИНСТВЕННАЯ версия"""
+    """Главное меню"""
     buttons = [
         [InlineKeyboardButton(text="📋 Необроблені", callback_data="orders:list:pending:offset=0")],
         [InlineKeyboardButton(text="📦 Всі замовлення", callback_data="orders:list:all:offset=0")],
@@ -193,7 +217,7 @@ async def on_main_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("orders:list:"))
 async def on_orders_list(callback: CallbackQuery):
-    """Список заказов с пагинацией"""
+    """Список заказов с пагинацией и сортировкой"""
     parts = callback.data.split(":")
     if len(parts) < 4:
         await callback.answer("❌ Некоректні дані", show_alert=True)
@@ -213,8 +237,14 @@ async def on_orders_list(callback: CallbackQuery):
         if kind == "pending":
             query = query.filter(Order.status.in_([OrderStatus.NEW, OrderStatus.WAITING_PAYMENT]))
 
+        # СОРТИРОВКА: сначала по order_number (если есть), потом по id - ОТ БОЛЬШИХ К МЕНЬШИМ
+        query = query.order_by(
+            Order.order_number.desc().nullslast(),  # Сначала с номерами (большие первые)
+            Order.id.desc()  # Потом по ID (большие первые)
+        )
+
         total = query.count()
-        orders = query.order_by(Order.created_at.desc()).offset(offset).limit(PAGE_SIZE).all()
+        orders = query.offset(offset).limit(PAGE_SIZE).all()
 
         if not orders:
             buttons = [[
@@ -241,10 +271,10 @@ async def on_orders_list(callback: CallbackQuery):
             emoji = get_status_emoji(order.status)
 
             # Текст в списке
-            text += f"{emoji} №{order_no} • {customer}\n"
+            text += f"{emoji} #{order_no} • {customer}\n"
 
-            # Кнопка
-            button_text = f"№{order_no} • {customer[:20]}"
+            # Кнопка с эмодзи статуса
+            button_text = f"{emoji} #{order_no} • {customer[:20]}"
             buttons.append([
                 InlineKeyboardButton(text=button_text, callback_data=f"order:{order.id}:view")
             ])
@@ -279,6 +309,150 @@ async def on_orders_list(callback: CallbackQuery):
             text,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.contains(":comment"))
+async def on_comment_button(callback: CallbackQuery, state: FSMContext):
+    """Кнопка 'Коментар' - запуск FSM для ввода комментария"""
+    if not check_permission(callback.from_user.id):
+        await callback.answer("❌ У вас немає прав для цієї дії", show_alert=True)
+        return
+
+    order_id = int(callback.data.split(":")[1])
+
+    # Запускаем FSM для ввода комментария
+    await state.set_state(CommentStates.waiting_for_comment)
+    await state.update_data(order_id=order_id, message_id=callback.message.message_id)
+
+    await callback.answer("💬 Відправте коментар до замовлення")
+    await callback.bot.send_message(
+        callback.message.chat.id,
+        f"💬 Введіть коментар до замовлення #{order_id}:",
+        reply_to_message_id=callback.message.message_id
+    )
+
+
+@router.message(CommentStates.waiting_for_comment)
+async def process_comment(message: Message, state: FSMContext):
+    """Обработка введенного комментария"""
+    if not check_permission(message.from_user.id):
+        await message.reply("❌ У вас немає прав для цієї дії")
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    order_id = data.get("order_id")
+    original_message_id = data.get("message_id")
+
+    with get_session() as session:
+        order = session.get(Order, order_id)
+        if not order:
+            await message.reply("❌ Замовлення не знайдено")
+            await state.clear()
+            return
+
+        # Сохраняем комментарий
+        order.comment = message.text
+
+        # Добавляем в историю
+        history = OrderStatusHistory(
+            order_id=order_id,
+            old_status=order.status.value,
+            new_status=order.status.value,
+            changed_by_user_id=message.from_user.id,
+            changed_by_username=message.from_user.username or message.from_user.first_name,
+            comment=message.text
+        )
+        session.add(history)
+        session.commit()
+
+        # Обновляем исходное сообщение
+        new_text = build_order_card_message(order, detailed=True)
+        keyboard = get_order_card_keyboard(order)
+
+        try:
+            await message.bot.edit_message_text(
+                new_text,
+                chat_id=message.chat.id,
+                message_id=original_message_id,
+                reply_markup=keyboard
+            )
+        except:
+            pass  # Сообщение могло быть уже изменено
+
+        await message.reply(f"✅ Коментар додано до замовлення #{order.order_number or order.id}")
+
+    await state.clear()
+
+
+@router.callback_query(F.data.contains(":reminder"))
+async def on_reminder_button(callback: CallbackQuery):
+    """Кнопка 'Нагадати' - показать выбор времени"""
+    if not check_permission(callback.from_user.id):
+        await callback.answer("❌ У вас немає прав для цієї дії", show_alert=True)
+        return
+
+    order_id = int(callback.data.split(":")[1])
+
+    # Показываем кнопки выбора времени
+    keyboard = get_reminder_keyboard(order_id)
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
+    await callback.answer("⏰ Оберіть час нагадування")
+
+
+@router.callback_query(F.data.startswith("reminder:"))
+async def handle_reminder_time(callback: CallbackQuery):
+    """Обработка выбора времени напоминания"""
+    if not check_permission(callback.from_user.id):
+        await callback.answer("❌ У вас немає прав для цієї дії", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    order_id = int(parts[1])
+    minutes = int(parts[2])
+
+    with get_session() as session:
+        order = session.get(Order, order_id)
+        if not order:
+            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
+            return
+
+        # Устанавливаем время напоминания
+        order.reminder_at = datetime.utcnow() + timedelta(minutes=minutes)
+        session.commit()
+
+        # Возвращаем исходные кнопки
+        message_text = build_order_card_message(order, detailed=True)
+        keyboard = get_order_card_keyboard(order)
+        await callback.message.edit_text(message_text, reply_markup=keyboard)
+
+        if minutes < 60:
+            time_text = f"{minutes} хвилин"
+        elif minutes < 1440:
+            time_text = f"{minutes // 60} годин"
+        else:
+            time_text = "завтра"
+
+        await callback.answer(f"✅ Нагадування встановлено через {time_text}")
+
+
+@router.callback_query(F.data.contains(":back"))
+async def on_back_to_order(callback: CallbackQuery):
+    """Кнопка 'Назад' к карточке заказа"""
+    order_id = int(callback.data.split(":")[1])
+
+    with get_session() as session:
+        order = session.get(Order, order_id)
+        if not order:
+            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
+            return
+
+        # Возвращаем карточку заказа
+        message_text = build_order_card_message(order, detailed=True)
+        keyboard = get_order_card_keyboard(order)
+        await callback.message.edit_text(message_text, reply_markup=keyboard)
 
     await callback.answer()
 
@@ -329,7 +503,7 @@ async def on_contacted(callback: CallbackQuery):
         await callback.answer("✅ Статус: Очікує оплату")
 
         # Уведомление в чат
-        notification = f"📝 Замовлення №{order.order_number or order.id} • Статус: ⏳ Очікує оплату"
+        notification = f"📝 Замовлення #{order.order_number or order.id} • Статус: ⏳ Очікує оплату"
         await callback.bot.send_message(callback.message.chat.id, notification)
 
 
@@ -377,7 +551,7 @@ async def on_cancel(callback: CallbackQuery):
         await callback.answer("❌ Замовлення скасовано")
 
         # Уведомление
-        notification = f"❌ Замовлення №{order.order_number or order.id} скасовано"
+        notification = f"❌ Замовлення #{order.order_number or order.id} скасовано"
         await callback.bot.send_message(callback.message.chat.id, notification)
 
 
@@ -425,7 +599,7 @@ async def on_paid(callback: CallbackQuery):
         await callback.answer("✅ Замовлення оплачено")
 
         # Уведомление
-        notification = f"💰 Замовлення №{order.order_number or order.id} оплачено!"
+        notification = f"💰 Замовлення #{order.order_number or order.id} оплачено!"
         await callback.bot.send_message(callback.message.chat.id, notification)
 
 
@@ -497,6 +671,8 @@ async def on_stats_show(callback: CallbackQuery):
         today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         today_count = session.query(Order).filter(Order.created_at >= today).count()
 
+        current_time = datetime.now().strftime('%H:%M')
+
         stats_text = f"""📊 <b>Статистика замовлень:</b>
 
 📦 Всього: {total}
@@ -508,24 +684,36 @@ async def on_stats_show(callback: CallbackQuery):
 ✅ Оплачених: {paid}
 ❌ Скасованих: {cancelled}
 
-<i>Оновлено: {datetime.now().strftime('%H:%M')}</i>"""
+<i>Оновлено: {current_time}</i>"""
 
         buttons = [[
-            InlineKeyboardButton(text="🔄 Оновити", callback_data="stats:show"),
+            InlineKeyboardButton(text="🔄 Оновити", callback_data="stats:refresh"),
             InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main")
         ]]
 
-        await callback.message.edit_text(
-            stats_text,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
-        )
+        try:
+            await callback.message.edit_text(
+                stats_text,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+            )
+        except TelegramBadRequest:
+            # Если сообщение не изменилось, просто обновляем клавиатуру
+            await callback.message.edit_reply_markup(
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+            )
 
     await callback.answer("📊 Статистика оновлена")
+
+
+@router.callback_query(F.data == "stats:refresh")
+async def on_stats_refresh(callback: CallbackQuery):
+    """Обновить статистику (отдельный обработчик для избежания ошибки)"""
+    # Просто вызываем показ статистики заново
+    callback.data = "stats:show"
+    await on_stats_show(callback)
 
 
 @router.callback_query(F.data == "noop")
 async def on_noop(callback: CallbackQuery):
     """Пустой обработчик для информационных кнопок"""
     await callback.answer()
-
-# TODO: Добавить обработчики для comment и reminder (из handlers/callbacks.py)
