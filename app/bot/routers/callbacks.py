@@ -1,4 +1,4 @@
-# app/bot/routers/callbacks.py
+# app/bot/routers/callbacks.py - ПОЛНАЯ ЗАМЕНА
 import asyncio
 from datetime import datetime, timedelta
 from aiogram import Router, F
@@ -117,13 +117,20 @@ def get_order_card_keyboard(order: Order) -> InlineKeyboardMarkup:
     if order.status == OrderStatus.NEW:
         buttons.append([
             InlineKeyboardButton(text="✅ Зв'язались", callback_data=f"order:{order.id}:contacted"),
-            InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order.id}:cancel")
+            InlineKeyboardButton(text="❌ Сорвався", callback_data=f"order:{order.id}:cancel")
         ])
     elif order.status == OrderStatus.WAITING_PAYMENT:
         buttons.append([
             InlineKeyboardButton(text="💰 Оплатили", callback_data=f"order:{order.id}:paid"),
-            InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order.id}:cancel")
+            InlineKeyboardButton(text="❌ Сорвався", callback_data=f"order:{order.id}:cancel")
         ])
+
+    # Кнопки для файлов и реквизитов
+    buttons.append([
+        InlineKeyboardButton(text="📄 PDF", callback_data=f"order:{order.id}:resend:pdf"),
+        InlineKeyboardButton(text="📱 VCF", callback_data=f"order:{order.id}:resend:vcf"),
+        InlineKeyboardButton(text="💳 Реквізити", callback_data=f"order:{order.id}:payment")
+    ])
 
     # Дополнительные действия для активных заказов
     if order.status in [OrderStatus.NEW, OrderStatus.WAITING_PAYMENT]:
@@ -131,12 +138,6 @@ def get_order_card_keyboard(order: Order) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="💬 Коментар", callback_data=f"order:{order.id}:comment"),
             InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order.id}:reminder")
         ])
-
-    # Кнопки для файлов
-    buttons.append([
-        InlineKeyboardButton(text="📄 PDF", callback_data=f"order:{order.id}:resend:pdf"),
-        InlineKeyboardButton(text="📱 VCF", callback_data=f"order:{order.id}:resend:vcf")
-    ])
 
     # Навигация
     buttons.append([
@@ -311,6 +312,160 @@ async def on_orders_list(callback: CallbackQuery):
         )
 
     await callback.answer()
+
+
+@router.callback_query(F.data.contains(":payment"))
+async def on_payment_info(callback: CallbackQuery):
+    """Кнопка 'Реквізити' - отправка реквизитов для оплаты"""
+    order_id = int(callback.data.split(":")[1])
+
+    with get_session() as session:
+        order = session.get(Order, order_id)
+        if not order:
+            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
+            return
+
+        # Получаем сумму заказа
+        order_total = "800"  # Значение по умолчанию
+        currency = "грн"
+
+        if order.raw_json:
+            total_price = order.raw_json.get("total_price")
+            order_currency = order.raw_json.get("currency", "UAH")
+            if total_price:
+                try:
+                    order_total = str(int(float(total_price)))
+                    currency = "грн" if order_currency == "UAH" else order_currency
+                except:
+                    pass
+
+        # Основное сообщение с реквизитами
+        payment_message = f"""💳 <b>Реквізити для оплати</b>
+
+Передаємо замовлення в роботу після предплати, так як виготовлення повністю індивідуально 
+
+Максимальний термін виготовлення складає 7 робочих днів, одразу по готовності відправляємо замовлення Вам 🚀
+
+🛍 <b>Сума замовлення складає - {order_total} {currency}</b>
+
+Оплату можна здійснити на:
+<b>ФОП Нитяжук Катерина Сергіївна</b>
+<code>UA613220010000026004340089782</code>
+<b>ЕДРПОУ:</b> 3577508940
+<b>Призначення:</b> Оплата за товар 
+
+Надсилаю всю інформацію окремо, щоб вам було зручно копіювати ☺️👇"""
+
+        # Отправляем основное сообщение
+        await callback.bot.send_message(
+            callback.message.chat.id,
+            payment_message
+        )
+
+        # Отправляем отдельные сообщения для копирования
+        copy_messages = [
+            "UA613220010000026004340089782",
+            "ФОП Нитяжук Катерина Сергіївна",
+            "3577508940",
+            "Оплата за товар"
+        ]
+
+        for msg in copy_messages:
+            await callback.bot.send_message(
+                callback.message.chat.id,
+                f"<code>{msg}</code>"
+            )
+
+        await callback.answer("💳 Реквізити відправлені")
+
+        # Логируем отправку реквизитов
+        history = OrderStatusHistory(
+            order_id=order_id,
+            old_status=order.status.value,
+            new_status=order.status.value,
+            changed_by_user_id=callback.from_user.id,
+            changed_by_username=callback.from_user.username or callback.from_user.first_name,
+            comment="Відправлені реквізити для оплати"
+        )
+        session.add(history)
+        session.commit()
+
+
+@router.callback_query(F.data.contains(":payment"))
+async def on_payment_info(callback: CallbackQuery):
+    """Кнопка 'Реквізити' - отправка реквизитов для оплаты"""
+    order_id = int(callback.data.split(":")[1])
+
+    with get_session() as session:
+        order = session.get(Order, order_id)
+        if not order:
+            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
+            return
+
+        # Получаем сумму заказа
+        order_total = "800"  # Значение по умолчанию
+        currency = "грн"
+
+        if order.raw_json:
+            total_price = order.raw_json.get("total_price")
+            order_currency = order.raw_json.get("currency", "UAH")
+            if total_price:
+                try:
+                    order_total = str(int(float(total_price)))
+                    currency = "грн" if order_currency == "UAH" else order_currency
+                except:
+                    pass
+
+        # Основное сообщение с реквизитами
+        payment_message = f"""💳 <b>Реквізити для оплати</b>
+
+Передаємо замовлення в роботу після предплати, так як виготовлення повністю індивідуально 
+
+Максимальний термін виготовлення складає 7 робочих днів, одразу по готовності відправляємо замовлення Вам 🚀
+
+🛍 <b>Сума замовлення складає - {order_total} {currency}</b>
+
+Оплату можна здійснити на:
+<b>ФОП Нитяжук Катерина Сергіївна</b>
+<code>UA613220010000026004340089782</code>
+<b>ЕДРПОУ:</b> 3577508940
+<b>Призначення:</b> Оплата за товар 
+
+Надсилаю всю інформацію окремо, щоб вам було зручно копіювати ☺️👇"""
+
+        # Отправляем основное сообщение
+        await callback.bot.send_message(
+            callback.message.chat.id,
+            payment_message
+        )
+
+        # Отправляем отдельные сообщения для копирования
+        copy_messages = [
+            "UA613220010000026004340089782",
+            "ФОП Нитяжук Катерина Сергіївна",
+            "3577508940",
+            "Оплата за товар"
+        ]
+
+        for msg in copy_messages:
+            await callback.bot.send_message(
+                callback.message.chat.id,
+                f"<code>{msg}</code>"
+            )
+
+        await callback.answer("💳 Реквізити відправлені")
+
+        # Логируем отправку реквизитов
+        history = OrderStatusHistory(
+            order_id=order_id,
+            old_status=order.status.value,
+            new_status=order.status.value,
+            changed_by_user_id=callback.from_user.id,
+            changed_by_username=callback.from_user.username or callback.from_user.first_name,
+            comment="Відправлені реквізити для оплати"
+        )
+        session.add(history)
+        session.commit()
 
 
 @router.callback_query(F.data.contains(":comment"))
@@ -523,7 +678,7 @@ async def on_cancel(callback: CallbackQuery):
             return
 
         if order.status == OrderStatus.CANCELLED:
-            await callback.answer("⚠️ Замовлення вже скасовано", show_alert=True)
+            await callback.answer("⚠️ Замовлення вже сорвалося", show_alert=True)
             return
 
         old_status = order.status
@@ -548,10 +703,10 @@ async def on_cancel(callback: CallbackQuery):
             reply_markup=keyboard
         )
 
-        await callback.answer("❌ Замовлення скасовано")
+        await callback.answer("❌ Замовлення сорвалося")
 
         # Уведомление
-        notification = f"❌ Замовлення #{order.order_number or order.id} скасовано"
+        notification = f"❌ Замовлення #{order.order_number or order.id} сорвалося"
         await callback.bot.send_message(callback.message.chat.id, notification)
 
 

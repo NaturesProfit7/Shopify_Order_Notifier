@@ -1,3 +1,4 @@
+# app/main.py
 import json
 import asyncio
 from contextlib import asynccontextmanager
@@ -6,20 +7,12 @@ from fastapi import FastAPI, Request, HTTPException
 import hmac, hashlib, base64
 from app.config import get_shopify_webhook_secret
 
-from app.services.phone_utils import normalize_ua_phone, pretty_ua_phone
+from app.services.phone_utils import normalize_ua_phone
 from app.services.vcf_service import build_contact_vcf
 from app.services.pdf_service import build_order_pdf
 from app.services.shopify_service import get_order
-from app.services.tg_service import (
-    send_file,
-    send_text_with_buttons,
-    answer_callback_query,
-    edit_message_text,
-)
 
 from app.bot.main import start_bot, stop_bot, get_bot
-from app.bot.services.message_builder import build_order_message
-from app.bot.keyboards import get_order_keyboard
 from app.db import get_session
 from app.models import Order, OrderStatus
 
@@ -113,7 +106,7 @@ def health():
 
 @app.post("/webhooks/shopify/orders")
 async def shopify_webhook(request: Request):
-    """Обработчик webhook от Shopify - финальная версия"""
+    """Обработчик webhook от Shopify - исправленная версия"""
     logger.info("=== WEBHOOK RECEIVED ===")
 
     # 1) Получаем и валидируем данные
@@ -152,16 +145,36 @@ async def shopify_webhook(request: Request):
         log_event("webhook_duplicate", order_id=str(order_id))
         return {"status": "duplicate", "order_id": str(order_id)}
 
-    # 3) Получаем полные данные заказа из Shopify
+    # 3) ИСПРАВЛЕНИЕ: Используем данные из webhook, а не делаем дополнительный запрос
     try:
-        logger.info(f"Fetching full order {order_id} from Shopify...")
-        order_full = get_order(order_id)
+        # Если webhook содержит полные данные - используем их
+        if len(event) > 5 and "line_items" in event:  # Полные данные заказа
+            order_full = event
+            logger.info(f"Using full order data from webhook")
+        else:
+            # Если только ID - получаем полные данные
+            logger.info(f"Fetching full order {order_id} from Shopify...")
+            order_full = get_order(order_id)
+
         pretty_order_no = _display_order_number(order_full, order_id)
-        log_event("shopify_get_order_ok", order_id=str(order_id), order_no=pretty_order_no)
+        log_event("order_data_ok", order_id=str(order_id), order_no=pretty_order_no)
+
     except Exception as e:
-        logger.error(f"Failed to fetch order from Shopify: {e}")
-        log_event("shopify_get_order_err", order_id=str(order_id), error=str(e))
-        raise HTTPException(status_code=502, detail="Failed to fetch order from Shopify")
+        logger.error(f"Failed to get order data: {e}")
+        log_event("order_data_err", order_id=str(order_id), error=str(e))
+
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Не падаем, если не можем получить данные
+        # Создаем минимальные данные для обработки
+        order_full = {
+            "id": order_id,
+            "order_number": order_id,
+            "customer": {},
+            "line_items": [],
+            "total_price": "0.00",
+            "currency": "UAH"
+        }
+        pretty_order_no = str(order_id)
+        logger.warning(f"Using minimal order data for order {order_id}")
 
     # 4) Помечаем как обработанный
     logger.info(f"Marking order {order_id} as processed...")
@@ -201,8 +214,7 @@ async def shopify_webhook(request: Request):
 
     try:
         from aiogram.types import BufferedInputFile
-        from app.bot.keyboards import get_order_keyboard
-        from app.bot.services.message_builder import build_order_message
+        from app.bot.services.order_helper import build_enhanced_order_message, get_enhanced_order_keyboard
 
         chat_id_int = int(chat_id)
 
@@ -213,57 +225,40 @@ async def shopify_webhook(request: Request):
                 logger.error(f"Order {order_id} not found in DB after processing")
                 raise HTTPException(status_code=500, detail="Database error")
 
-            # Строим красивое сообщение
-            message_text = build_order_message(order_obj, detailed=True)
-            keyboard = get_order_keyboard(order_obj)
+            # НОВЫЙ ФОРМАТ: 1. Основное сообщение с информацией и кнопками управления
+            main_message = build_enhanced_order_message(order_obj, order_full)
+            main_keyboard = get_enhanced_order_keyboard(order_obj)
 
-            # 1. Отправляем PDF
-            pdf_file = BufferedInputFile(pdf_bytes, pdf_filename)
-            pdf_caption = f"📦 Замовлення #{pretty_order_no}"
-            if first_name or last_name:
-                pdf_caption += f" • {first_name} {last_name}".strip()
-
-            logger.info(f"Sending PDF to chat {chat_id}")
-            await bot.send_document(
+            main_msg = await bot.send_message(
                 chat_id=chat_id_int,
-                document=pdf_file,
-                caption=pdf_caption
-            )
-            logger.info("PDF sent successfully")
-
-            # 2. Отправляем VCF
-            vcf_file = BufferedInputFile(vcf_bytes, vcf_filename)
-            vcf_caption = "📱 Контакт клієнта"
-            if phone_e164:
-                # Телефон без пробелов
-                vcf_caption += f" • {phone_e164}"
-            else:
-                vcf_caption += " • ⚠️ Номер потребує перевірки"
-
-            logger.info(f"Sending VCF to chat {chat_id}")
-            await bot.send_document(
-                chat_id=chat_id_int,
-                document=vcf_file,
-                caption=vcf_caption
-            )
-            logger.info("VCF sent successfully")
-
-            # 3. Отправляем сообщение с кнопками
-            logger.info(f"Sending message with buttons")
-            button_message = await bot.send_message(
-                chat_id=chat_id_int,
-                text=message_text,
-                reply_markup=keyboard
+                text=main_message,
+                reply_markup=main_keyboard
             )
 
-            # Сохраняем ID сообщения с кнопками
+            # Сохраняем ID основного сообщения
             await update_telegram_info(
                 order_id,
                 chat_id=str(chat_id),
-                message_id=button_message.message_id
+                message_id=main_msg.message_id
             )
 
-            logger.info(f"Message with buttons sent, id: {button_message.message_id}")
+            # 2. PDF с caption "Повідомлення клієнту"
+            customer_message = f"""💬 <b>Повідомлення клієнту:</b>
+
+<i>Вітаю, {first_name or 'клієнте'} ☺️
+Ваше замовлення №{pretty_order_no}
+Все вірно?</i>"""
+
+            pdf_file = BufferedInputFile(pdf_bytes, pdf_filename)
+            await bot.send_document(
+                chat_id=chat_id_int,
+                document=pdf_file,
+                caption=customer_message
+            )
+
+            # VCF НЕ отправляем автоматически - только по кнопке
+
+            logger.info(f"All messages sent successfully for order {order_id}")
             log_event("webhook_processed", order_id=str(order_id), status="success")
 
     except Exception as e:
@@ -273,4 +268,3 @@ async def shopify_webhook(request: Request):
 
     logger.info(f"=== WEBHOOK PROCESSED SUCCESSFULLY for order {order_id} ===")
     return {"status": "ok", "order_id": str(order_id)}
-

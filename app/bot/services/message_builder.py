@@ -18,7 +18,7 @@ def get_status_text(status: OrderStatus) -> str:
         OrderStatus.NEW: "Новий",
         OrderStatus.WAITING_PAYMENT: "Очікує оплату",
         OrderStatus.PAID: "Оплачено",
-        OrderStatus.CANCELLED: "Скасовано"
+        OrderStatus.CANCELLED: "Сорвався"
     }[status]
 
 
