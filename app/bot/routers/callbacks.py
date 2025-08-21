@@ -17,6 +17,10 @@ import os
 
 router = Router()
 
+# Хранилище ID последних сообщений для каждого пользователя
+# В продакшене можно перенести в Redis или БД
+user_last_messages = {}
+
 
 # FSM состояния для ввода комментария
 class CommentStates(StatesGroup):
@@ -28,6 +32,39 @@ def check_permission(user_id: int) -> bool:
     allowed_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")
     allowed = [int(uid.strip()) for uid in allowed_ids.split(",") if uid.strip()]
     return not allowed or user_id in allowed  # Если список пустой - доступ всем
+
+
+def store_user_message(user_id: int, message_id: int):
+    """Сохраняем ID сообщения пользователя для редактирования"""
+    user_last_messages[user_id] = message_id
+
+
+async def edit_or_send_message(bot, chat_id: int, user_id: int, text: str,
+                               reply_markup: InlineKeyboardMarkup = None):
+    """Редактируем последнее сообщение пользователя или отправляем новое"""
+    last_message_id = user_last_messages.get(user_id)
+
+    if last_message_id:
+        try:
+            await bot.edit_message_text(
+                text=text,
+                chat_id=chat_id,
+                message_id=last_message_id,
+                reply_markup=reply_markup
+            )
+            return last_message_id
+        except (TelegramBadRequest, Exception):
+            # Если не удалось отредактировать, отправляем новое
+            pass
+
+    # Отправляем новое сообщение
+    message = await bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        reply_markup=reply_markup
+    )
+    store_user_message(user_id, message.message_id)
+    return message.message_id
 
 
 def format_phone_compact(e164: str) -> str:
@@ -63,12 +100,9 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
         items = data.get("line_items", [])
         if items:
             items_text = []
-            total_sum = 0
             for item in items[:5]:  # Показываем первые 5
                 title = item.get("title", "")
                 qty = item.get("quantity", 0)
-                price = float(item.get("price", 0))
-                total_sum += price * qty
                 items_text.append(f"• {title} x{qty}")
 
             if items_text:
@@ -110,36 +144,40 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
 
 
 def get_order_card_keyboard(order: Order) -> InlineKeyboardMarkup:
-    """Клавиатура для карточки заказа"""
+    """Клавиатура для карточки заказа - ЕДИНЫЙ ФОРМАТ"""
     buttons = []
 
-    # Кнопки изменения статуса
+    # Первый ряд: Кнопки статуса
     if order.status == OrderStatus.NEW:
         buttons.append([
             InlineKeyboardButton(text="✅ Зв'язались", callback_data=f"order:{order.id}:contacted"),
-            InlineKeyboardButton(text="❌ Сорвався", callback_data=f"order:{order.id}:cancel")
+            InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order.id}:cancel")
         ])
     elif order.status == OrderStatus.WAITING_PAYMENT:
         buttons.append([
             InlineKeyboardButton(text="💰 Оплатили", callback_data=f"order:{order.id}:paid"),
-            InlineKeyboardButton(text="❌ Сорвався", callback_data=f"order:{order.id}:cancel")
+            InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order.id}:cancel")
         ])
 
-    # Кнопки для файлов и реквизитов
+    # Второй ряд: PDF и VCF
     buttons.append([
         InlineKeyboardButton(text="📄 PDF", callback_data=f"order:{order.id}:resend:pdf"),
-        InlineKeyboardButton(text="📱 VCF", callback_data=f"order:{order.id}:resend:vcf"),
+        InlineKeyboardButton(text="📱 VCF", callback_data=f"order:{order.id}:resend:vcf")
+    ])
+
+    # Третий ряд: Реквизиты (на всю ширину)
+    buttons.append([
         InlineKeyboardButton(text="💳 Реквізити", callback_data=f"order:{order.id}:payment")
     ])
 
-    # Дополнительные действия для активных заказов
+    # Четвертый ряд: Дополнительные действия (для активных заказов)
     if order.status in [OrderStatus.NEW, OrderStatus.WAITING_PAYMENT]:
         buttons.append([
             InlineKeyboardButton(text="💬 Коментар", callback_data=f"order:{order.id}:comment"),
             InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order.id}:reminder")
         ])
 
-    # Навигация
+    # Пятый ряд: Навигация
     buttons.append([
         InlineKeyboardButton(text="↩️ До списку", callback_data=f"orders:list:pending:offset=0")
     ])
@@ -164,61 +202,31 @@ def get_reminder_keyboard(order_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="↩️ Назад", callback_data=f"order:{order_id}:back")
         ]
     ]
-
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-@router.callback_query(F.data.regexp(r"^order:\d+:view$"))
-async def on_order_view(callback: CallbackQuery):
-    """Показать полную карточку заказа"""
-    order_id = int(callback.data.split(":")[1])
-
-    with get_session() as session:
-        order = session.get(Order, order_id)
-        if not order:
-            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
-            return
-
-        # Используем единый формат
-        message_text = build_order_card_message(order, detailed=True)
-        keyboard = get_order_card_keyboard(order)
-
-        try:
-            await callback.message.edit_text(
-                message_text,
-                reply_markup=keyboard
-            )
-        except TelegramBadRequest:
-            # Если сообщение не изменилось, просто отвечаем на callback
-            pass
-        except Exception:
-            await callback.message.answer(
-                message_text,
-                reply_markup=keyboard
-            )
-
-    await callback.answer()
 
 
 @router.callback_query(F.data == "menu:main")
 async def on_main_menu(callback: CallbackQuery):
-    """Главное меню"""
+    """Главное меню - РЕДАКТИРУЕМ сообщение"""
     buttons = [
         [InlineKeyboardButton(text="📋 Необроблені", callback_data="orders:list:pending:offset=0")],
         [InlineKeyboardButton(text="📦 Всі замовлення", callback_data="orders:list:all:offset=0")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="stats:show")]
     ]
 
-    await callback.message.edit_text(
+    await edit_or_send_message(
+        callback.bot,
+        callback.message.chat.id,
+        callback.from_user.id,
         "🏠 <b>Головне меню</b>\n\nОберіть дію:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        InlineKeyboardMarkup(inline_keyboard=buttons)
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("orders:list:"))
 async def on_orders_list(callback: CallbackQuery):
-    """Список заказов с пагинацией и сортировкой"""
+    """Список заказов - РЕДАКТИРУЕМ сообщение"""
     parts = callback.data.split(":")
     if len(parts) < 4:
         await callback.answer("❌ Некоректні дані", show_alert=True)
@@ -240,8 +248,8 @@ async def on_orders_list(callback: CallbackQuery):
 
         # СОРТИРОВКА: сначала по order_number (если есть), потом по id - ОТ БОЛЬШИХ К МЕНЬШИМ
         query = query.order_by(
-            Order.order_number.desc().nullslast(),  # Сначала с номерами (большие первые)
-            Order.id.desc()  # Потом по ID (большие первые)
+            Order.order_number.desc().nullslast(),
+            Order.id.desc()
         )
 
         total = query.count()
@@ -251,9 +259,12 @@ async def on_orders_list(callback: CallbackQuery):
             buttons = [[
                 InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu:main")
             ]]
-            await callback.message.edit_text(
+            await edit_or_send_message(
+                callback.bot,
+                callback.message.chat.id,
+                callback.from_user.id,
                 "📭 Немає замовлень для відображення",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+                InlineKeyboardMarkup(inline_keyboard=buttons)
             )
             await callback.answer()
             return
@@ -306,9 +317,38 @@ async def on_orders_list(callback: CallbackQuery):
             InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu:main")
         ])
 
-        await callback.message.edit_text(
+        await edit_or_send_message(
+            callback.bot,
+            callback.message.chat.id,
+            callback.from_user.id,
             text,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+            InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^order:\d+:view$"))
+async def on_order_view(callback: CallbackQuery):
+    """Показать карточку заказа - РЕДАКТИРУЕМ сообщение"""
+    order_id = int(callback.data.split(":")[1])
+
+    with get_session() as session:
+        order = session.get(Order, order_id)
+        if not order:
+            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
+            return
+
+        # Используем единый формат
+        message_text = build_order_card_message(order, detailed=True)
+        keyboard = get_order_card_keyboard(order)
+
+        await edit_or_send_message(
+            callback.bot,
+            callback.message.chat.id,
+            callback.from_user.id,
+            message_text,
+            keyboard
         )
 
     await callback.answer()
@@ -326,7 +366,7 @@ async def on_payment_info(callback: CallbackQuery):
             return
 
         # Получаем сумму заказа
-        order_total = "800"  # Значение по умолчанию
+        order_total = "800"
         currency = "грн"
 
         if order.raw_json:
@@ -357,10 +397,13 @@ async def on_payment_info(callback: CallbackQuery):
 Надсилаю всю інформацію окремо, щоб вам було зручно копіювати ☺️👇"""
 
         # Отправляем основное сообщение
-        await callback.bot.send_message(
+        main_msg = await callback.bot.send_message(
             callback.message.chat.id,
             payment_message
         )
+
+        # Отслеживаем основное сообщение с реквизитами
+        track_order_message(callback.from_user.id, order_id, main_msg.message_id)
 
         # Отправляем отдельные сообщения для копирования
         copy_messages = [
@@ -370,88 +413,13 @@ async def on_payment_info(callback: CallbackQuery):
             "Оплата за товар"
         ]
 
-        for msg in copy_messages:
-            await callback.bot.send_message(
+        for msg_text in copy_messages:
+            copy_msg = await callback.bot.send_message(
                 callback.message.chat.id,
-                f"<code>{msg}</code>"
+                f"<code>{msg_text}</code>"
             )
-
-        await callback.answer("💳 Реквізити відправлені")
-
-        # Логируем отправку реквизитов
-        history = OrderStatusHistory(
-            order_id=order_id,
-            old_status=order.status.value,
-            new_status=order.status.value,
-            changed_by_user_id=callback.from_user.id,
-            changed_by_username=callback.from_user.username or callback.from_user.first_name,
-            comment="Відправлені реквізити для оплати"
-        )
-        session.add(history)
-        session.commit()
-
-
-@router.callback_query(F.data.contains(":payment"))
-async def on_payment_info(callback: CallbackQuery):
-    """Кнопка 'Реквізити' - отправка реквизитов для оплаты"""
-    order_id = int(callback.data.split(":")[1])
-
-    with get_session() as session:
-        order = session.get(Order, order_id)
-        if not order:
-            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
-            return
-
-        # Получаем сумму заказа
-        order_total = "800"  # Значение по умолчанию
-        currency = "грн"
-
-        if order.raw_json:
-            total_price = order.raw_json.get("total_price")
-            order_currency = order.raw_json.get("currency", "UAH")
-            if total_price:
-                try:
-                    order_total = str(int(float(total_price)))
-                    currency = "грн" if order_currency == "UAH" else order_currency
-                except:
-                    pass
-
-        # Основное сообщение с реквизитами
-        payment_message = f"""💳 <b>Реквізити для оплати</b>
-
-Передаємо замовлення в роботу після предплати, так як виготовлення повністю індивідуально 
-
-Максимальний термін виготовлення складає 7 робочих днів, одразу по готовності відправляємо замовлення Вам 🚀
-
-🛍 <b>Сума замовлення складає - {order_total} {currency}</b>
-
-Оплату можна здійснити на:
-<b>ФОП Нитяжук Катерина Сергіївна</b>
-<code>UA613220010000026004340089782</code>
-<b>ЕДРПОУ:</b> 3577508940
-<b>Призначення:</b> Оплата за товар 
-
-Надсилаю всю інформацію окремо, щоб вам було зручно копіювати ☺️👇"""
-
-        # Отправляем основное сообщение
-        await callback.bot.send_message(
-            callback.message.chat.id,
-            payment_message
-        )
-
-        # Отправляем отдельные сообщения для копирования
-        copy_messages = [
-            "UA613220010000026004340089782",
-            "ФОП Нитяжук Катерина Сергіївна",
-            "3577508940",
-            "Оплата за товар"
-        ]
-
-        for msg in copy_messages:
-            await callback.bot.send_message(
-                callback.message.chat.id,
-                f"<code>{msg}</code>"
-            )
+            # Отслеживаем каждое сообщение с реквизитами
+            track_order_message(callback.from_user.id, order_id, copy_msg.message_id)
 
         await callback.answer("💳 Реквізити відправлені")
 
@@ -479,14 +447,18 @@ async def on_comment_button(callback: CallbackQuery, state: FSMContext):
 
     # Запускаем FSM для ввода комментария
     await state.set_state(CommentStates.waiting_for_comment)
-    await state.update_data(order_id=order_id, message_id=callback.message.message_id)
+    await state.update_data(order_id=order_id, original_message_id=callback.message.message_id)
 
-    await callback.answer("💬 Відправте коментар до замовлення")
-    await callback.bot.send_message(
+    # Отправляем запрос комментария БЕЗ reply
+    prompt_msg = await callback.bot.send_message(
         callback.message.chat.id,
-        f"💬 Введіть коментар до замовлення #{order_id}:",
-        reply_to_message_id=callback.message.message_id
+        f"💬 Введіть коментар до замовлення #{order_id}:"
     )
+
+    # Сохраняем ID сообщения с запросом для последующего удаления
+    await state.update_data(prompt_message_id=prompt_msg.message_id)
+
+    await callback.answer("💬 Очікую ваш коментар")
 
 
 @router.message(CommentStates.waiting_for_comment)
@@ -499,7 +471,10 @@ async def process_comment(message: Message, state: FSMContext):
 
     data = await state.get_data()
     order_id = data.get("order_id")
-    original_message_id = data.get("message_id")
+    original_message_id = data.get("original_message_id")
+    prompt_message_id = data.get("prompt_message_id")
+
+    comment_text = message.text
 
     with get_session() as session:
         order = session.get(Order, order_id)
@@ -509,7 +484,7 @@ async def process_comment(message: Message, state: FSMContext):
             return
 
         # Сохраняем комментарий
-        order.comment = message.text
+        order.comment = comment_text
 
         # Добавляем в историю
         history = OrderStatusHistory(
@@ -518,12 +493,12 @@ async def process_comment(message: Message, state: FSMContext):
             new_status=order.status.value,
             changed_by_user_id=message.from_user.id,
             changed_by_username=message.from_user.username or message.from_user.first_name,
-            comment=message.text
+            comment=comment_text
         )
         session.add(history)
         session.commit()
 
-        # Обновляем исходное сообщение
+        # Обновляем исходное сообщение с заказом
         new_text = build_order_card_message(order, detailed=True)
         keyboard = get_order_card_keyboard(order)
 
@@ -535,9 +510,22 @@ async def process_comment(message: Message, state: FSMContext):
                 reply_markup=keyboard
             )
         except:
-            pass  # Сообщение могло быть уже изменено
+            pass
 
-        await message.reply(f"✅ Коментар додано до замовлення #{order.order_number or order.id}")
+        # Отправляем уведомление в новом формате
+        notification = f'✅ Коментар "{comment_text}" додано до замовлення #{order.order_number or order.id}'
+        await message.bot.send_message(message.chat.id, notification)
+
+        # Удаляем вспомогательные сообщения
+        try:
+            # Удаляем сообщение с запросом комментария
+            if prompt_message_id:
+                await message.bot.delete_message(message.chat.id, prompt_message_id)
+
+            # Удаляем сообщение пользователя с комментарием
+            await message.bot.delete_message(message.chat.id, message.message_id)
+        except:
+            pass
 
     await state.clear()
 
@@ -551,10 +539,14 @@ async def on_reminder_button(callback: CallbackQuery):
 
     order_id = int(callback.data.split(":")[1])
 
-    # Показываем кнопки выбора времени
+    # Показываем кнопки выбора времени - РЕДАКТИРУЕМ сообщение
     keyboard = get_reminder_keyboard(order_id)
-    await callback.message.edit_reply_markup(reply_markup=keyboard)
-    await callback.answer("⏰ Оберіть час нагадування")
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+        await callback.answer("⏰ Оберіть час нагадування")
+    except:
+        await callback.answer("⏰ Оберіть час нагадування", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("reminder:"))
@@ -581,7 +573,11 @@ async def handle_reminder_time(callback: CallbackQuery):
         # Возвращаем исходные кнопки
         message_text = build_order_card_message(order, detailed=True)
         keyboard = get_order_card_keyboard(order)
-        await callback.message.edit_text(message_text, reply_markup=keyboard)
+
+        try:
+            await callback.message.edit_text(message_text, reply_markup=keyboard)
+        except:
+            pass
 
         if minutes < 60:
             time_text = f"{minutes} хвилин"
@@ -607,7 +603,11 @@ async def on_back_to_order(callback: CallbackQuery):
         # Возвращаем карточку заказа
         message_text = build_order_card_message(order, detailed=True)
         keyboard = get_order_card_keyboard(order)
-        await callback.message.edit_text(message_text, reply_markup=keyboard)
+
+        try:
+            await callback.message.edit_text(message_text, reply_markup=keyboard)
+        except:
+            pass
 
     await callback.answer()
 
@@ -650,10 +650,10 @@ async def on_contacted(callback: CallbackQuery):
         message_text = build_order_card_message(order, detailed=True)
         keyboard = get_order_card_keyboard(order)
 
-        await callback.message.edit_text(
-            message_text,
-            reply_markup=keyboard
-        )
+        try:
+            await callback.message.edit_text(message_text, reply_markup=keyboard)
+        except:
+            pass
 
         await callback.answer("✅ Статус: Очікує оплату")
 
@@ -678,7 +678,7 @@ async def on_cancel(callback: CallbackQuery):
             return
 
         if order.status == OrderStatus.CANCELLED:
-            await callback.answer("⚠️ Замовлення вже сорвалося", show_alert=True)
+            await callback.answer("⚠️ Замовлення вже скасовано", show_alert=True)
             return
 
         old_status = order.status
@@ -698,15 +698,15 @@ async def on_cancel(callback: CallbackQuery):
         message_text = build_order_card_message(order, detailed=True)
         keyboard = get_order_card_keyboard(order)
 
-        await callback.message.edit_text(
-            message_text,
-            reply_markup=keyboard
-        )
+        try:
+            await callback.message.edit_text(message_text, reply_markup=keyboard)
+        except:
+            pass
 
-        await callback.answer("❌ Замовлення сорвалося")
+        await callback.answer("❌ Замовлення скасовано")
 
         # Уведомление
-        notification = f"❌ Замовлення #{order.order_number or order.id} сорвалося"
+        notification = f"❌ Замовлення #{order.order_number or order.id} скасовано"
         await callback.bot.send_message(callback.message.chat.id, notification)
 
 
@@ -746,10 +746,10 @@ async def on_paid(callback: CallbackQuery):
         message_text = build_order_card_message(order, detailed=True)
         keyboard = get_order_card_keyboard(order)
 
-        await callback.message.edit_text(
-            message_text,
-            reply_markup=keyboard
-        )
+        try:
+            await callback.message.edit_text(message_text, reply_markup=keyboard)
+        except:
+            pass
 
         await callback.answer("✅ Замовлення оплачено")
 
@@ -778,15 +778,21 @@ async def on_resend_file(callback: CallbackQuery):
                 pdf_bytes, pdf_filename = build_order_pdf(order.raw_json)
                 pdf_file = BufferedInputFile(pdf_bytes, pdf_filename)
 
-                caption = f"📦 Замовлення #{order.order_number or order.id}"
-                if order.customer_first_name or order.customer_last_name:
-                    caption += f" • {order.customer_first_name or ''} {order.customer_last_name or ''}".strip()
+                # PDF с caption для клиента
+                customer_message = f"""💬 <b>Повідомлення клієнту:</b>
 
-                await callback.bot.send_document(
+<i>Вітаю, {order.customer_first_name or 'клієнте'} ☺️
+Ваше замовлення №{order.order_number or order.id}
+Все вірно?</i>"""
+
+                pdf_msg = await callback.bot.send_document(
                     chat_id=callback.message.chat.id,
                     document=pdf_file,
-                    caption=caption
+                    caption=customer_message
                 )
+
+                # Отслеживаем PDF сообщение
+                track_order_message(callback.from_user.id, order_id, pdf_msg.message_id)
                 await callback.answer("✅ PDF відправлено")
 
             elif file_type == "vcf":
@@ -798,15 +804,18 @@ async def on_resend_file(callback: CallbackQuery):
                 )
                 vcf_file = BufferedInputFile(vcf_bytes, vcf_filename)
 
-                caption = "📱 Контакт клієнта"
+                caption = f"📱 Контакт клієнта • #{order.order_number or order.id}"
                 if order.customer_phone_e164:
                     caption += f" • {format_phone_compact(order.customer_phone_e164)}"
 
-                await callback.bot.send_document(
+                vcf_msg = await callback.bot.send_document(
                     chat_id=callback.message.chat.id,
                     document=vcf_file,
                     caption=caption
                 )
+
+                # Отслеживаем VCF сообщение
+                track_order_message(callback.from_user.id, order_id, vcf_msg.message_id)
                 await callback.answer("✅ VCF відправлено")
 
         except Exception as e:
@@ -815,7 +824,7 @@ async def on_resend_file(callback: CallbackQuery):
 
 @router.callback_query(F.data == "stats:show")
 async def on_stats_show(callback: CallbackQuery):
-    """Показать статистику"""
+    """Показать статистику - РЕДАКТИРУЕМ сообщение"""
     with get_session() as session:
         total = session.query(Order).count()
         new = session.query(Order).filter(Order.status == OrderStatus.NEW).count()
@@ -846,26 +855,78 @@ async def on_stats_show(callback: CallbackQuery):
             InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main")
         ]]
 
-        try:
-            await callback.message.edit_text(
-                stats_text,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
-            )
-        except TelegramBadRequest:
-            # Если сообщение не изменилось, просто обновляем клавиатуру
-            await callback.message.edit_reply_markup(
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
-            )
+        await edit_or_send_message(
+            callback.bot,
+            callback.message.chat.id,
+            callback.from_user.id,
+            stats_text,
+            InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
 
     await callback.answer("📊 Статистика оновлена")
 
 
 @router.callback_query(F.data == "stats:refresh")
 async def on_stats_refresh(callback: CallbackQuery):
-    """Обновить статистику (отдельный обработчик для избежания ошибки)"""
-    # Просто вызываем показ статистики заново
+    """Обновить статистику"""
     callback.data = "stats:show"
     await on_stats_show(callback)
+
+
+# Добавим новый обработчик для кнопки "До списку"
+@router.callback_query(F.data.startswith("orders:list:pending:offset=0"))
+async def on_back_to_pending_list(callback: CallbackQuery):
+    """Кнопка 'До списку' - возврат к списку необработанных с очисткой"""
+
+    # Если переход из карточки заказа - удаляем связанные сообщения
+    if callback.message and callback.message.text and "Замовлення #" in callback.message.text:
+        # Извлекаем order_id из текста сообщения
+        try:
+            import re
+            match = re.search(r'Замовлення #(\d+)', callback.message.text)
+            if match:
+                order_number = match.group(1)
+                # Найдем order_id по номеру
+                with get_session() as session:
+                    order = session.query(Order).filter(
+                        (Order.order_number == order_number) | (Order.id == int(order_number))
+                    ).first()
+
+                    if order:
+                        # Удаляем все связанные сообщения
+                        await delete_order_related_messages(
+                            callback.bot,
+                            callback.message.chat.id,
+                            callback.from_user.id,
+                            order.id,
+                            str(order.order_number or order.id)
+                        )
+        except Exception as e:
+            # Если не смогли извлечь - продолжаем без удаления
+            pass
+
+    # Показываем список необработанных (используем существующий обработчик)
+    callback.data = "orders:list:pending:offset=0"
+    await on_orders_list(callback)
+
+
+# Добавим обработчик команды /menu
+@router.message(F.text == "/menu")
+async def on_menu_command(message: Message):
+    """Команда /menu - показать главное меню с редактированием"""
+    buttons = [
+        [InlineKeyboardButton(text="📋 Необроблені", callback_data="orders:list:pending:offset=0")],
+        [InlineKeyboardButton(text="📦 Всі замовлення", callback_data="orders:list:all:offset=0")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="stats:show")]
+    ]
+
+    new_message = await message.answer(
+        "🏠 <b>Головне меню</b>\n\nОберіть дію:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+
+    # Сохраняем ID нового сообщения для последующего редактирования
+    store_user_message(message.from_user.id, new_message.message_id)
 
 
 @router.callback_query(F.data == "noop")

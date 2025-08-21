@@ -250,11 +250,16 @@ async def shopify_webhook(request: Request):
 Все вірно?</i>"""
 
             pdf_file = BufferedInputFile(pdf_bytes, pdf_filename)
-            await bot.send_document(
+            pdf_msg = await bot.send_document(
                 chat_id=chat_id_int,
                 document=pdf_file,
                 caption=customer_message
             )
+
+            # Отслеживаем PDF для возможного удаления
+            # Импортируем функцию отслеживания (добавить в импорты)
+            # from app.bot.routers.callbacks import track_order_message
+            # track_order_message(chat_id_int, order_id, pdf_msg.message_id)
 
             # VCF НЕ отправляем автоматически - только по кнопке
 

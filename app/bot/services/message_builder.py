@@ -18,7 +18,7 @@ def get_status_text(status: OrderStatus) -> str:
         OrderStatus.NEW: "Новий",
         OrderStatus.WAITING_PAYMENT: "Очікує оплату",
         OrderStatus.PAID: "Оплачено",
-        OrderStatus.CANCELLED: "Сорвався"
+        OrderStatus.CANCELLED: "Скасовано"
     }[status]
 
 
@@ -49,14 +49,6 @@ def build_order_message(order: Order, detailed: bool = False) -> str:
 ━━━━━━━━━━━━━━━━━━━━━━
 👤 {customer_name}
 📱 {phone}"""
-
-    # Сообщение для клиента (всегда показываем)
-    message += f"""
-━━━━━━━━━━━━━━━━━━━━━━
-💬 <b>Повідомлення клієнту:</b>
-<i>Вітаю, {order.customer_first_name or 'клієнте'} ☺️
-Ваше замовлення №{order_no}
-Все вірно?</i>"""
 
     # Детальная информация (если запрошено и есть данные)
     if detailed and order.raw_json:

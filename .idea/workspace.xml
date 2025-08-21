@@ -5,13 +5,11 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="Claude work">
-      <change afterPath="$PROJECT_DIR$/app/bot/services/order_helper.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/services/order_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/bot/routers/callbacks.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/bot/routers/callbacks.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/bot/services/message_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/bot/services/message_builder.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/bot/services/order_helper.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/bot/services/order_helper.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/services/shopify_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/shopify_service.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -194,7 +192,15 @@
       <option name="project" value="LOCAL" />
       <updated>1755782154045</updated>
     </task>
-    <option name="localTasksCounter" value="13" />
+    <task id="LOCAL-00013" summary="Claude work">
+      <option name="closed" value="true" />
+      <created>1755785291587</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1755785291587</updated>
+    </task>
+    <option name="localTasksCounter" value="14" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
