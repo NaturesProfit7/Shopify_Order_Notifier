@@ -215,7 +215,8 @@ async def shopify_webhook(request: Request):
                 raise HTTPException(status_code=500, detail="Database error")
 
             # НОВЫЙ ФОРМАТ: Основное сообщение с кнопками управления
-            from app.bot.routers.callbacks import build_order_card_message, get_order_card_keyboard
+            from app.bot.routers.orders import build_order_card_message
+            from app.bot.routers.shared import order_card_keyboard
 
             main_message = build_order_card_message(order_obj, detailed=True)
             main_keyboard = get_order_card_keyboard(order_obj)

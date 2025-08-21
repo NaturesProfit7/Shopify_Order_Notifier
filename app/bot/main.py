@@ -1,4 +1,4 @@
-# app/bot/main.py
+# app/bot/main.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
 import asyncio
 import os
 from datetime import datetime, timedelta
@@ -6,10 +6,10 @@ from typing import Optional
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.bot.routers import commands, callbacks
 from app.db import get_session
 from app.models import Order, OrderStatus
 
@@ -37,7 +37,7 @@ class TelegramBot:
             raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
 
         self.bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        self.dp = Dispatcher()
+        self.dp = Dispatcher(storage=MemoryStorage())
         self.scheduler = AsyncIOScheduler(timezone="Europe/Kyiv")
         self.chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
 
@@ -59,29 +59,27 @@ class TelegramBot:
 
     def _register_handlers(self):
         """Регистрация всех хендлеров"""
-        from app.bot.routers import commands, navigation
+        from app.bot.routers import commands, navigation, orders, management
 
         # Регистрируем роутеры в правильном порядке
         self.dp.include_router(commands.router)
         self.dp.include_router(navigation.router)
+        self.dp.include_router(orders.router)
+        self.dp.include_router(management.router)
 
-        # TODO: Добавить остальные роутеры когда перенесем код
-        # self.dp.include_router(orders.router)
-        # self.dp.include_router(management.router)
-
-        logger.info("Handlers registered: commands, navigation")
+        logger.info("Handlers registered: commands, navigation, orders, management")
 
     def _setup_scheduler(self):
         """Настройка планировщика задач"""
         # Проверка НОВЫХ заказов КАЖДЫЙ ЧАС
         self.scheduler.add_job(
             self._check_new_orders,
-            trigger=IntervalTrigger(hours=1),  # Изменено с 30 минут на 1 час
+            trigger=IntervalTrigger(hours=1),
             id="check_new_orders",
             replace_existing=True
         )
 
-        # Проверка напоминаний каждые 5 минут (оставляем как есть)
+        # Проверка напоминаний каждые 5 минут
         self.scheduler.add_job(
             self._check_reminders,
             trigger=IntervalTrigger(minutes=5),
@@ -153,46 +151,6 @@ class TelegramBot:
 
         except Exception as e:
             logger.error(f"Error checking new orders: {e}", exc_info=True)
-
-    async def _check_unprocessed_orders(self):
-        """Проверка необработанных заказов"""
-        try:
-            with get_session() as session:
-                # Заказы старше 30 минут в статусе NEW
-                threshold = datetime.utcnow() - timedelta(minutes=30)
-                unprocessed = session.query(Order).filter(
-                    Order.status == OrderStatus.NEW,
-                    Order.created_at < threshold,
-                    (Order.last_reminder_sent.is_(None)) |
-                    (Order.last_reminder_sent < datetime.utcnow() - timedelta(hours=2))
-                ).limit(5).all()
-
-                if unprocessed and self.chat_id:
-                    message = "⚠️ <b>Необроблені замовлення (30+ хв):</b>\n\n"
-                    for order in unprocessed:
-                        order_no = order.order_number or order.id
-                        customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip()
-                        elapsed = datetime.utcnow() - order.created_at
-                        hours = int(elapsed.total_seconds() // 3600)
-                        minutes = int((elapsed.total_seconds() % 3600) // 60)
-
-                        message += f"• №{order_no} - {customer or 'Без імені'}"
-                        if hours > 0:
-                            message += f" ({hours}г {minutes}хв тому)\n"
-                        else:
-                            message += f" ({minutes}хв тому)\n"
-
-                        # Обновляем время последнего напоминания
-                        order.last_reminder_sent = datetime.utcnow()
-
-                    session.commit()
-
-                    # Отправляем уведомление
-                    await self.bot.send_message(self.chat_id, message)
-                    logger.info(f"Sent reminder for {len(unprocessed)} unprocessed orders")
-
-        except Exception as e:
-            logger.error(f"Error checking unprocessed orders: {e}", exc_info=True)
 
     async def _check_reminders(self):
         """Проверка напоминаний о перезвоне - каждые 5 минут"""

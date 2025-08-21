@@ -81,12 +81,21 @@ async def update_navigation_message(bot, chat_id: int, user_id: int, text: str,
             )
             debug_print(f"Successfully edited message {last_message_id}")
             return True
-        except (TelegramBadRequest, Exception) as e:
+        except TelegramBadRequest as e:
+            # Если сообщение не изменилось - это нормально, не создаем новое
+            if "message is not modified" in str(e).lower():
+                debug_print(f"Message {last_message_id} content is the same, no update needed")
+                return True
+            else:
+                debug_print(f"Failed to edit message {last_message_id}: {e}", "WARN")
+                # Удаляем недействительный ID только при других ошибках
+                remove_navigation_message_id(user_id)
+        except Exception as e:
             debug_print(f"Failed to edit message {last_message_id}: {e}", "WARN")
             # Удаляем недействительный ID
             remove_navigation_message_id(user_id)
 
-    # Отправляем новое сообщение
+    # Отправляем новое сообщение только если действительно нужно
     debug_print(f"Sending new navigation message for user {user_id}")
     try:
         message = await bot.send_message(
