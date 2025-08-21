@@ -14,7 +14,8 @@ from .shared import (
     debug_print,
     check_permission,
     update_navigation_message,
-    reminder_time_keyboard
+    reminder_time_keyboard,
+    track_order_file_message
 )
 
 router = Router()
@@ -35,14 +36,23 @@ async def on_comment_button(callback: CallbackQuery, state: FSMContext):
     order_id = int(callback.data.split(":")[1])
     debug_print(f"Comment request for order {order_id} from user {callback.from_user.id}")
 
+    # Получаем короткий номер заказа для отображения
+    with get_session() as session:
+        order = session.get(Order, order_id)
+        if not order:
+            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
+            return
+
+        display_order_no = order.order_number or order.id
+
     # Запускаем FSM для ввода комментария
     await state.set_state(CommentStates.waiting_for_comment)
     await state.update_data(order_id=order_id, original_message_id=callback.message.message_id)
 
-    # Отправляем запрос комментария
+    # Отправляем запрос комментария с КОРОТКИМ номером заказа
     prompt_msg = await callback.bot.send_message(
         callback.message.chat.id,
-        f"💬 Введіть коментар до замовлення #{order_id}:"
+        f"💬 Введіть коментар до замовлення #{display_order_no}:"
     )
 
     # Сохраняем ID сообщения с запросом для последующего удаления
@@ -83,6 +93,9 @@ async def process_comment(message: Message, state: FSMContext):
                 await state.clear()
                 return
 
+            # Получаем короткий номер для уведомления
+            display_order_no = order.order_number or order.id
+
             debug_print("Saving comment to order...")
             # Сохраняем комментарий
             order.comment = comment_text
@@ -122,10 +135,13 @@ async def process_comment(message: Message, state: FSMContext):
             except Exception as e:
                 debug_print(f"Failed to update order card: {e}", "WARN")
 
-            # Отправляем уведомление
+            # Отправляем уведомление с КОРОТКИМ номером - ОТСЛЕЖИВАЕМ как файл заказа
             debug_print("Sending notification...")
-            notification = f'✅ Коментар "{comment_text}" додано до замовлення #{order.order_number or order.id}'
-            await message.bot.send_message(message.chat.id, notification)
+            notification = f'✅ Коментар "{comment_text}" додано до замовлення #{display_order_no}'
+            notification_msg = await message.bot.send_message(message.chat.id, notification)
+
+            # ОТСЛЕЖИВАЕМ уведомление как файл заказа для последующего удаления
+            track_order_file_message(message.from_user.id, order_id, notification_msg.message_id)
 
             # Удаляем вспомогательные сообщения
             debug_print("Cleaning up messages...")

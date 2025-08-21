@@ -43,25 +43,33 @@ def track_navigation_message(user_id: int, message_id: int) -> None:
 
 def track_order_file_message(user_id: int, order_id: int, message_id: int) -> None:
     """Отслеживаем файловые сообщения заказа"""
-    debug_print(f"Tracking file message for user {user_id}, order {order_id}: {message_id}")
+    debug_print(f"📌 TRACKING: user {user_id}, order {order_id}, message {message_id}")
     add_order_file_message(user_id, order_id, message_id)
+
+    # Проверяем, что сообщение добавилось
+    tracked_messages = get_order_file_messages(user_id, order_id)
+    debug_print(f"📌 Now tracking {len(tracked_messages)} messages for order {order_id}: {list(tracked_messages)}")
 
 
 async def cleanup_order_files(bot, chat_id: int, user_id: int, order_id: int) -> None:
     """Удаляем все файловые сообщения конкретного заказа"""
-    debug_print(f"Cleaning up files for user {user_id}, order {order_id}")
+    debug_print(f"🧹 CLEANUP START: user {user_id}, order {order_id}")
     message_ids = get_order_file_messages(user_id, order_id)
+    debug_print(f"🧹 Found {len(message_ids)} messages to delete: {list(message_ids)}")
 
     deleted_count = 0
     for msg_id in message_ids:
         try:
+            debug_print(f"🧹 Deleting message {msg_id}...")
             await bot.delete_message(chat_id, msg_id)
             deleted_count += 1
+            debug_print(f"✅ Deleted message {msg_id}")
         except Exception as e:
-            debug_print(f"Failed to delete message {msg_id}: {e}", "WARN")
+            debug_print(f"❌ Failed to delete message {msg_id}: {e}", "WARN")
 
     clear_order_file_messages(user_id, order_id)
-    debug_print(f"Deleted {deleted_count} file messages for order {order_id}")
+    debug_print(f"🧹 CLEANUP COMPLETE: Deleted {deleted_count}/{len(message_ids)} messages for order {order_id}")
+    debug_print(f"🧹 Cleared tracking for user {user_id}, order {order_id}")
 
 
 async def update_navigation_message(bot, chat_id: int, user_id: int, text: str,

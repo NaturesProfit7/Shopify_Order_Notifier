@@ -1,4 +1,4 @@
-# app/bot/routers/navigation.py
+# app/bot/routers/navigation.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
 """Роутер для навигации: главное меню, списки заказов, статистика"""
 
 from datetime import datetime
@@ -36,9 +36,10 @@ async def on_main_menu(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("orders:list:"))
+# ИСПРАВЛЕНО: более специфический фильтр, исключающий обработчики из orders.py
+@router.callback_query(F.data.regexp(r"^orders:list:(pending|all):offset=\d+$"))
 async def on_orders_list(callback: CallbackQuery):
-    """Список заказов"""
+    """Список заказов - ТОЛЬКО стандартный формат без order_id"""
     debug_print(f"Orders list callback: {callback.data} from user {callback.from_user.id}")
 
     parts = callback.data.split(":")

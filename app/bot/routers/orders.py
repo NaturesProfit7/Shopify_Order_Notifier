@@ -1,4 +1,4 @@
-# app/bot/routers/orders.py - ОЧИЩЕННАЯ ВЕРСИЯ
+# app/bot/routers/orders.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
 """Роутер для работы с заказами: просмотр, изменение статусов, отправка файлов"""
 
 from aiogram import Router, F
@@ -295,9 +295,13 @@ async def on_contacted(callback: CallbackQuery):
 
         await callback.answer("✅ Статус: Очікує оплату")
 
-        # Уведомление в чат
-        notification = f"📝 Замовлення #{order.order_number or order.id} • Статус: ⏳ Очікує оплату"
-        await callback.bot.send_message(callback.message.chat.id, notification)
+        # Уведомление в чат - ОТСЛЕЖИВАЕМ как файл заказа
+        order_no = order.order_number or order.id
+        notification_msg = await callback.bot.send_message(
+            callback.message.chat.id,
+            f"📝 Замовлення #{order_no} • Статус: ⏳ Очікує оплату"
+        )
+        track_order_file_message(callback.from_user.id, order_id, notification_msg.message_id)
 
 
 @router.callback_query(F.data.contains(":cancel"))
@@ -347,9 +351,13 @@ async def on_cancel(callback: CallbackQuery):
 
         await callback.answer("❌ Замовлення скасовано")
 
-        # Уведомление
-        notification = f"❌ Замовлення #{order.order_number or order.id} скасовано"
-        await callback.bot.send_message(callback.message.chat.id, notification)
+        # Уведомление - ОТСЛЕЖИВАЕМ как файл заказа
+        order_no = order.order_number or order.id
+        notification_msg = await callback.bot.send_message(
+            callback.message.chat.id,
+            f"❌ Замовлення #{order_no} скасовано"
+        )
+        track_order_file_message(callback.from_user.id, order_id, notification_msg.message_id)
 
 
 @router.callback_query(F.data.contains(":paid"))
@@ -399,30 +407,48 @@ async def on_paid(callback: CallbackQuery):
 
         await callback.answer("✅ Замовлення оплачено")
 
-        # Уведомление
-        notification = f"💰 Замовлення #{order.order_number or order.id} оплачено!"
-        await callback.bot.send_message(callback.message.chat.id, notification)
+        # Уведомление - ОТСЛЕЖИВАЕМ как файл заказа
+        order_no = order.order_number or order.id
+        notification_msg = await callback.bot.send_message(
+            callback.message.chat.id,
+            f"💰 Замовлення #{order_no} оплачено!"
+        )
+        track_order_file_message(callback.from_user.id, order_id, notification_msg.message_id)
 
 
-@router.callback_query(F.data.startswith("orders:list:pending:offset=0"))
-async def on_back_to_pending_list(callback: CallbackQuery):
-    """Кнопка 'До списку' - возврат к списку с очисткой файлов"""
-    debug_print(f"Back to pending list from user {callback.from_user.id}")
+# ИСПРАВЛЕННЫЙ обработчик "До списку" с передачей order_id
+@router.callback_query(F.data.regexp(r"^orders:list:pending:offset=0:order=\d+$"))
+async def on_back_to_pending_list_with_order(callback: CallbackQuery):
+    """Кнопка 'До списку' - возврат к списку с очисткой файлов КОНКРЕТНОГО заказа"""
+    # Извлекаем order_id из callback_data
+    try:
+        order_id = int(callback.data.split("order=")[1])
+        debug_print(f"Back to pending list from order {order_id}, user {callback.from_user.id}")
 
-    # Если это переход из карточки заказа - очищаем все файлы пользователя
-    if callback.message and callback.message.text and "Замовлення #" in callback.message.text:
-        from .shared.state import user_order_files
-        # Очищаем все файлы пользователя
-        if callback.from_user.id in user_order_files:
-            for order_id in list(user_order_files[callback.from_user.id].keys()):
-                await cleanup_order_files(
-                    callback.bot,
-                    callback.message.chat.id,
-                    callback.from_user.id,
-                    order_id
-                )
+        # Очищаем ВСЕ файлы этого заказа (PDF, VCF, реквизиты, уведомления)
+        debug_print(f"Cleaning up ALL messages for user {callback.from_user.id}, order {order_id}")
+        await cleanup_order_files(
+            callback.bot,
+            callback.message.chat.id,
+            callback.from_user.id,
+            order_id
+        )
+        debug_print(f"Cleanup completed for order {order_id}")
+
+    except (ValueError, IndexError) as e:
+        debug_print(f"Failed to extract order_id from callback_data: {e}", "ERROR")
 
     # Показываем список
+    debug_print("Showing orders list after cleanup")
     from .navigation import on_orders_list
-    callback.data = "orders:list:pending:offset=0"
-    await on_orders_list(callback)
+
+    # Создаем новый объект callback с правильными данными
+    from types import SimpleNamespace
+    new_callback = SimpleNamespace()
+    new_callback.data = "orders:list:pending:offset=0"
+    new_callback.from_user = callback.from_user
+    new_callback.bot = callback.bot
+    new_callback.message = callback.message
+    new_callback.answer = callback.answer
+
+    await on_orders_list(new_callback)

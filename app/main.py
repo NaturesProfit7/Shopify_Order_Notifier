@@ -1,4 +1,4 @@
-# app/main.py
+# app/main.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
 import json
 import asyncio
 from contextlib import asynccontextmanager
@@ -104,8 +104,6 @@ def health():
     return {"status": "ok"}
 
 
-# app/main.py - ЗАМЕНИТЕ ТОЛЬКО ФУНКЦИЮ shopify_webhook
-
 @app.post("/webhooks/shopify/orders")
 async def shopify_webhook(request: Request):
     """Обработчик webhook от Shopify - исправленная версия"""
@@ -203,8 +201,6 @@ async def shopify_webhook(request: Request):
         raise HTTPException(status_code=500, detail="Bot not initialized")
 
     try:
-        from aiogram.types import BufferedInputFile
-
         chat_id_int = int(chat_id)
 
         # Получаем объект заказа из БД
@@ -219,7 +215,7 @@ async def shopify_webhook(request: Request):
             from app.bot.routers.shared import order_card_keyboard
 
             main_message = build_order_card_message(order_obj, detailed=True)
-            main_keyboard = get_order_card_keyboard(order_obj)
+            main_keyboard = order_card_keyboard(order_obj)
 
             main_msg = await bot.send_message(
                 chat_id=chat_id_int,

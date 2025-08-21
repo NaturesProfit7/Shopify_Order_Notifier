@@ -1,4 +1,4 @@
-# app/bot/main.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# app/bot/main.py - РАБОЧАЯ ВЕРСИЯ
 import asyncio
 import os
 from datetime import datetime, timedelta
@@ -37,7 +37,11 @@ class TelegramBot:
             raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
 
         self.bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        self.dp = Dispatcher(storage=MemoryStorage())
+
+        # ИСПОЛЬЗУЕМ MemoryStorage для FSM
+        storage = MemoryStorage()
+        self.dp = Dispatcher(storage=storage)
+
         self.scheduler = AsyncIOScheduler(timezone="Europe/Kyiv")
         self.chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
 
@@ -55,19 +59,37 @@ class TelegramBot:
         self._setup_scheduler()
 
         self.initialized = True
-        logger.info("TelegramBot initialized")
+        logger.info("TelegramBot initialized with FSM storage")
 
     def _register_handlers(self):
         """Регистрация всех хендлеров"""
-        from app.bot.routers import commands, navigation, orders, management
+        try:
+            logger.info("Starting handler registration...")
 
-        # Регистрируем роутеры в правильном порядке
-        self.dp.include_router(commands.router)
-        self.dp.include_router(navigation.router)
-        self.dp.include_router(orders.router)
-        self.dp.include_router(management.router)
+            # Импортируем роутеры
+            from app.bot.routers import commands, navigation, orders, management
 
-        logger.info("Handlers registered: commands, navigation, orders, management")
+            logger.info("All routers imported successfully")
+
+            # Регистрируем роутеры в правильном порядке
+            # ВАЖНО: management первым для FSM
+            self.dp.include_router(management.router)
+            logger.info("✅ Management router registered (FSM)")
+
+            self.dp.include_router(commands.router)
+            logger.info("✅ Commands router registered")
+
+            self.dp.include_router(navigation.router)
+            logger.info("✅ Navigation router registered")
+
+            self.dp.include_router(orders.router)
+            logger.info("✅ Orders router registered")
+
+            logger.info("All handlers registered successfully!")
+
+        except Exception as e:
+            logger.error(f"Error registering handlers: {e}", exc_info=True)
+            raise
 
     def _setup_scheduler(self):
         """Настройка планировщика задач"""
@@ -86,44 +108,38 @@ class TelegramBot:
             id="check_reminders",
             replace_existing=True
         )
-        logger.info("Scheduler configured: check new orders every hour, check reminders every 5 min")
+        logger.info("Scheduler configured")
 
     async def _check_new_orders(self):
         """Проверка заказов в статусе NEW - каждый час"""
         try:
             with get_session() as session:
-                # Находим ВСЕ заказы в статусе NEW
                 new_orders = session.query(Order).filter(
                     Order.status == OrderStatus.NEW
                 ).order_by(Order.created_at.desc()).all()
 
-                # Если нет новых заказов - не отправляем уведомление
                 if not new_orders or not self.chat_id:
                     return
 
-                # Формируем сообщение
                 message = f"🆕 <b>Необроблені замовлення ({len(new_orders)} шт):</b>\n\n"
 
-                for order in new_orders[:10]:  # Показываем первые 10
+                for order in new_orders[:10]:
                     order_no = order.order_number or order.id
                     customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
 
-                    # Рассчитываем время с момента создания
                     elapsed = datetime.utcnow() - order.created_at
                     hours = int(elapsed.total_seconds() // 3600)
                     minutes = int((elapsed.total_seconds() % 3600) // 60)
 
-                    # Добавляем индикатор срочности
                     if hours >= 2:
-                        urgency = "🔥"  # Срочно - более 2 часов
+                        urgency = "🔥"
                     elif hours >= 1:
-                        urgency = "⚠️"  # Внимание - более часа
+                        urgency = "⚠️"
                     else:
-                        urgency = "📍"  # Обычный
+                        urgency = "📍"
 
                     message += f"{urgency} №{order_no} • {customer}"
 
-                    # Показываем время
                     if hours > 0:
                         message += f" ({hours}г {minutes}хв тому)\n"
                     else:
@@ -132,7 +148,6 @@ class TelegramBot:
                 if len(new_orders) > 10:
                     message += f"\n<i>...та ще {len(new_orders) - 10} замовлень</i>\n"
 
-                # Добавляем кнопку для быстрого перехода
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
                 keyboard = InlineKeyboardMarkup(inline_keyboard=[[
                     InlineKeyboardButton(
@@ -141,7 +156,6 @@ class TelegramBot:
                     )
                 ]])
 
-                # Отправляем уведомление
                 await self.bot.send_message(
                     self.chat_id,
                     message,
@@ -166,8 +180,6 @@ class TelegramBot:
                     try:
                         order_no = order.order_number or order.id
                         customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
-
-                        # Форматируем телефон БЕЗ пробелов
                         phone = order.customer_phone_e164 if order.customer_phone_e164 else "Телефон відсутній"
 
                         message = (
@@ -180,7 +192,6 @@ class TelegramBot:
                         if order.comment:
                             message += f"\n💬 Коментар: <i>{order.comment}</i>"
 
-                        # Добавляем кнопку для перехода к заказу
                         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
                         keyboard = InlineKeyboardMarkup(inline_keyboard=[[
                             InlineKeyboardButton(
@@ -189,7 +200,6 @@ class TelegramBot:
                             )
                         ]])
 
-                        # Отправляем напоминание
                         if self.chat_id:
                             await self.bot.send_message(
                                 self.chat_id,
@@ -198,7 +208,6 @@ class TelegramBot:
                             )
                             logger.info(f"Sent reminder for order {order_no}")
 
-                        # Очищаем напоминание
                         order.reminder_at = None
 
                     except Exception as e:
@@ -214,12 +223,10 @@ class TelegramBot:
         try:
             logger.info("Starting bot polling...")
 
-            # Запускаем планировщик
             if not self.scheduler.running:
                 self.scheduler.start()
                 logger.info("Scheduler started")
 
-            # Запускаем polling
             await self.dp.start_polling(self.bot, allowed_updates=['message', 'callback_query'])
 
         except Exception as e:
@@ -233,14 +240,11 @@ class TelegramBot:
                 logger.warning("Bot is already running")
                 return
 
-            # Создаем фоновую задачу для polling
             self.polling_task = asyncio.create_task(self.start_polling())
             logger.info("Bot polling task created")
 
-            # Даем время на инициализацию
             await asyncio.sleep(1)
 
-            # Проверяем, что бот запустился
             try:
                 me = await self.bot.get_me()
                 logger.info(f"Bot started successfully: @{me.username}")
@@ -256,7 +260,6 @@ class TelegramBot:
             logger.info("Stopping Telegram bot...")
 
             try:
-                # Останавливаем polling
                 if self.polling_task and not self.polling_task.done():
                     self.polling_task.cancel()
                     try:
@@ -264,14 +267,11 @@ class TelegramBot:
                     except asyncio.CancelledError:
                         pass
 
-                # Останавливаем диспетчер
                 await self.dp.stop_polling()
 
-                # Останавливаем планировщик
                 if self.scheduler.running:
                     self.scheduler.shutdown(wait=False)
 
-                # Закрываем сессию бота
                 await self.bot.session.close()
 
                 logger.info("Bot stopped successfully")
