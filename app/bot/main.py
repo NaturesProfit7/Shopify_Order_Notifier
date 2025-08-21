@@ -59,9 +59,17 @@ class TelegramBot:
 
     def _register_handlers(self):
         """Регистрация всех хендлеров"""
+        from app.bot.routers import commands, navigation
+
+        # Регистрируем роутеры в правильном порядке
         self.dp.include_router(commands.router)
-        self.dp.include_router(callbacks.router)
-        logger.info("Handlers registered")
+        self.dp.include_router(navigation.router)
+
+        # TODO: Добавить остальные роутеры когда перенесем код
+        # self.dp.include_router(orders.router)
+        # self.dp.include_router(management.router)
+
+        logger.info("Handlers registered: commands, navigation")
 
     def _setup_scheduler(self):
         """Настройка планировщика задач"""

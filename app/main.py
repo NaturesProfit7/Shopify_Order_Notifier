@@ -104,6 +104,8 @@ def health():
     return {"status": "ok"}
 
 
+# app/main.py - ЗАМЕНИТЕ ТОЛЬКО ФУНКЦИЮ shopify_webhook
+
 @app.post("/webhooks/shopify/orders")
 async def shopify_webhook(request: Request):
     """Обработчик webhook от Shopify - исправленная версия"""
@@ -145,7 +147,7 @@ async def shopify_webhook(request: Request):
         log_event("webhook_duplicate", order_id=str(order_id))
         return {"status": "duplicate", "order_id": str(order_id)}
 
-    # 3) ИСПРАВЛЕНИЕ: Используем данные из webhook, а не делаем дополнительный запрос
+    # 3) Получаем полные данные заказа
     try:
         # Если webhook содержит полные данные - используем их
         if len(event) > 5 and "line_items" in event:  # Полные данные заказа
@@ -164,7 +166,6 @@ async def shopify_webhook(request: Request):
         log_event("order_data_err", order_id=str(order_id), error=str(e))
 
         # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Не падаем, если не можем получить данные
-        # Создаем минимальные данные для обработки
         order_full = {
             "id": order_id,
             "order_number": order_id,
@@ -195,18 +196,7 @@ async def shopify_webhook(request: Request):
         logger.error("TELEGRAM_TARGET_CHAT_ID not set!")
         raise HTTPException(status_code=500, detail="Telegram chat ID not configured")
 
-    # 6) Генерируем файлы
-    logger.info("Generating PDF and VCF files...")
-    pdf_bytes, pdf_filename = build_order_pdf(order_full)
-    vcf_bytes, vcf_filename = build_contact_vcf(
-        first_name=first_name,
-        last_name=last_name,
-        order_id=pretty_order_no,
-        phone_e164=phone_e164,
-        embed_order_in_n=True,
-    )
-
-    # 7) Отправляем через aiogram бота
+    # 6) Отправляем через aiogram бота
     bot = get_bot()
     if not bot:
         logger.error("Bot instance not available!")
@@ -214,7 +204,6 @@ async def shopify_webhook(request: Request):
 
     try:
         from aiogram.types import BufferedInputFile
-        from app.bot.services.order_helper import build_enhanced_order_message, get_enhanced_order_keyboard
 
         chat_id_int = int(chat_id)
 
@@ -225,9 +214,11 @@ async def shopify_webhook(request: Request):
                 logger.error(f"Order {order_id} not found in DB after processing")
                 raise HTTPException(status_code=500, detail="Database error")
 
-            # НОВЫЙ ФОРМАТ: 1. Основное сообщение с информацией и кнопками управления
-            main_message = build_enhanced_order_message(order_obj, order_full)
-            main_keyboard = get_enhanced_order_keyboard(order_obj)
+            # НОВЫЙ ФОРМАТ: Основное сообщение с кнопками управления
+            from app.bot.routers.callbacks import build_order_card_message, get_order_card_keyboard
+
+            main_message = build_order_card_message(order_obj, detailed=True)
+            main_keyboard = get_order_card_keyboard(order_obj)
 
             main_msg = await bot.send_message(
                 chat_id=chat_id_int,
@@ -235,35 +226,17 @@ async def shopify_webhook(request: Request):
                 reply_markup=main_keyboard
             )
 
-            # Сохраняем ID основного сообщения
+            # Сохраняем ID основного сообщения для редактирования
             await update_telegram_info(
                 order_id,
                 chat_id=str(chat_id),
                 message_id=main_msg.message_id
             )
 
-            # 2. PDF с caption "Повідомлення клієнту"
-            customer_message = f"""💬 <b>Повідомлення клієнту:</b>
+            # АВТОМАТИЧЕСКИ НЕ ОТПРАВЛЯЕМ PDF/VCF - только по кнопкам
+            # Это убирает дублирование и дает больше контроля менеджеру
 
-<i>Вітаю, {first_name or 'клієнте'} ☺️
-Ваше замовлення №{pretty_order_no}
-Все вірно?</i>"""
-
-            pdf_file = BufferedInputFile(pdf_bytes, pdf_filename)
-            pdf_msg = await bot.send_document(
-                chat_id=chat_id_int,
-                document=pdf_file,
-                caption=customer_message
-            )
-
-            # Отслеживаем PDF для возможного удаления
-            # Импортируем функцию отслеживания (добавить в импорты)
-            # from app.bot.routers.callbacks import track_order_message
-            # track_order_message(chat_id_int, order_id, pdf_msg.message_id)
-
-            # VCF НЕ отправляем автоматически - только по кнопке
-
-            logger.info(f"All messages sent successfully for order {order_id}")
+            logger.info(f"Main order message sent successfully for order {order_id}")
             log_event("webhook_processed", order_id=str(order_id), status="success")
 
     except Exception as e:
