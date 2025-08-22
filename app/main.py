@@ -1,4 +1,4 @@
-# app/main.py - WEBHOOK с кнопкой "Закрити"
+# app/main.py - С ОТЛАДКОЙ HMAC
 import json
 import asyncio
 from contextlib import asynccontextmanager
@@ -106,24 +106,36 @@ def health():
 
 @app.post("/webhooks/shopify/orders")
 async def shopify_webhook(request: Request):
-    """Обработчик webhook от Shopify - ОТДЕЛЬНЫЕ сообщения с кнопкой 'Закрити'"""
+    """Обработчик webhook от Shopify - С ОТЛАДКОЙ HMAC"""
     logger.info("=== WEBHOOK RECEIVED ===")
 
     # 1) Получаем и валидируем данные
     raw_body = await request.body()
     logger.info(f"Body size: {len(raw_body)} bytes")
 
-    # Валидация HMAC
+    # ИСПРАВЛЕННАЯ HMAC ВАЛИДАЦИЯ с правильным secret
+    # РАБОЧАЯ HMAC ВАЛИДАЦИЯ
     hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
     secret = get_shopify_webhook_secret()
-    digest = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).digest()
-    computed_hmac = base64.b64encode(digest).decode("utf-8")
 
-    if not hmac.compare_digest(computed_hmac, hmac_header or ""):
-        logger.error(f"HMAC mismatch!")
+    if not hmac_header:
+        logger.error("Missing X-Shopify-Hmac-Sha256 header")
+        raise HTTPException(status_code=403, detail="Missing HMAC header")
+
+    if not secret:
+        logger.error("Missing SHOPIFY_WEBHOOK_SECRET")
+        raise HTTPException(status_code=500, detail="Missing webhook secret")
+
+    # Shopify использует secret как UTF-8 строку (не hex!)
+    secret_bytes = secret.encode('utf-8')
+    digest = hmac.new(secret_bytes, raw_body, hashlib.sha256).digest()
+    computed_hmac = base64.b64encode(digest).decode('utf-8')
+
+    if not hmac.compare_digest(computed_hmac, hmac_header):
+        logger.error(f"HMAC mismatch: computed={computed_hmac}, expected={hmac_header}")
         raise HTTPException(status_code=403, detail="Invalid HMAC signature")
 
-    logger.info("HMAC validation passed")
+    logger.info("✅ HMAC validation passed")
 
     # Парсим JSON
     try:

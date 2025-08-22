@@ -147,7 +147,7 @@ def build_order_pdf(order: dict) -> Tuple[bytes, str]:
         if not addresses_are_same(shipping, billing):
             contact_name = f"{contact_info.get('first_name', '')} {contact_info.get('last_name', '')}".strip()
             if contact_name:
-                scenario_info = f"Заказчик: {contact_name}"
+                scenario_info = f"Замовник: {contact_name}"
 
     # Разметка страницы
     top = height - 20 * mm
