@@ -88,11 +88,11 @@ class TelegramBot:
             self.dp.include_router(commands.router)
             logger.info("✅ Commands router registered")
 
-            self.dp.include_router(navigation.router)
-            logger.info("✅ Navigation router registered")
-
             self.dp.include_router(orders.router)
             logger.info("✅ Orders router registered")
+
+            self.dp.include_router(navigation.router)
+            logger.info("✅ Navigation router registered")
 
             logger.info("All handlers registered successfully!")
 

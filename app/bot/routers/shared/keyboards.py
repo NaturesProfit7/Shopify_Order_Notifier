@@ -1,14 +1,8 @@
-# app/bot/routers/shared/keyboards.py - ПОЛНАЯ ВЕРСИЯ С АДАПТИВНЫМИ КНОПКАМИ
+# app/bot/routers/shared/keyboards.py - РАБОЧАЯ ВЕРСИЯ
 """Клавиатуры для бота"""
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from app.models import Order, OrderStatus
-from .state import get_navigation_message_id
-
-
-def is_from_webhook(user_id: int) -> bool:
-    """Определяем, что заказ пришел из webhook (нет активного меню)"""
-    return get_navigation_message_id(user_id) is None
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
@@ -45,7 +39,6 @@ def orders_list_keyboard(kind: str, offset: int, page_size: int,
     buttons = []
 
     if has_orders:
-        # Пагинация
         nav_buttons = []
         if offset > 0:
             nav_buttons.append(
@@ -66,7 +59,6 @@ def orders_list_keyboard(kind: str, offset: int, page_size: int,
         if nav_buttons:
             buttons.append(nav_buttons)
 
-    # Главное меню
     buttons.append([
         InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu:main")
     ])
@@ -74,8 +66,8 @@ def orders_list_keyboard(kind: str, offset: int, page_size: int,
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def order_card_keyboard(order: Order, user_id: int = None) -> InlineKeyboardMarkup:
-    """Клавиатура для карточки заказа - АДАПТИВНАЯ под источник"""
+def order_card_keyboard(order: Order) -> InlineKeyboardMarkup:
+    """Клавиатура для карточки заказа - ПРОСТАЯ РАБОЧАЯ ВЕРСИЯ"""
     buttons = []
 
     # Кнопки статуса
@@ -108,23 +100,10 @@ def order_card_keyboard(order: Order, user_id: int = None) -> InlineKeyboardMark
             InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order.id}:reminder")
         ])
 
-    # АДАПТИВНАЯ навигация в зависимости от источника
-    if user_id and is_from_webhook(user_id):
-        # Заказ из webhook - кнопка "Закрыть"
-        buttons.append([
-            InlineKeyboardButton(
-                text="❌ Закрити",
-                callback_data=f"order:{order.id}:close"
-            )
-        ])
-    else:
-        # Заказ из меню - кнопка "До списку"
-        buttons.append([
-            InlineKeyboardButton(
-                text="↩️ До списку",
-                callback_data=f"order:{order.id}:back_to_list"
-            )
-        ])
+    # Навигация
+    buttons.append([
+        InlineKeyboardButton(text="↩️ До списку", callback_data=f"order:{order.id}:back_to_list")
+    ])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

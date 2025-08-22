@@ -1,9 +1,9 @@
-# app/bot/routers/orders.py - ПОЛНАЯ ВЕРСИЯ С КНОПКОЙ "ЗАКРЫТЬ"
+# app/bot/routers/orders.py - РАБОЧАЯ ВЕРСИЯ (восстановление)
 """Роутер для работы с заказами: просмотр, изменение статусов, отправка файлов"""
 
 from datetime import datetime
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CallbackQuery, BufferedInputFile
 
 from app.db import get_session
 from app.models import Order, OrderStatus, OrderStatusHistory
@@ -17,7 +17,6 @@ from .shared import (
     format_phone_compact,
     track_order_file_message,
     cleanup_order_files,
-    update_navigation_message,
     order_card_keyboard
 )
 
@@ -86,34 +85,9 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
     return message
 
 
-@router.callback_query(F.data.regexp(r"^order:\d+:close$"))
-async def on_close_order(callback: CallbackQuery):
-    """Кнопка 'Закрити' для заказов из webhook - удаляем все связанные сообщения"""
-    order_id = int(callback.data.split(":")[1])
-    debug_print(f"Close order {order_id} from webhook, user {callback.from_user.id}")
-
-    # Удаляем ВСЕ файлы и сообщения этого заказа
-    await cleanup_order_files(
-        callback.bot,
-        callback.message.chat.id,
-        callback.from_user.id,
-        order_id
-    )
-
-    # Также удаляем саму карточку заказа
-    try:
-        await callback.message.delete()
-        debug_print(f"Deleted order card message for order {order_id}")
-    except Exception as e:
-        debug_print(f"Failed to delete order card: {e}", "WARN")
-
-    # Отвечаем на callback (чтобы убрать "часики" в Telegram)
-    await callback.answer("✅ Замовлення закрито")
-
-
 @router.callback_query(F.data.regexp(r"^order:\d+:view$"))
 async def on_order_view(callback: CallbackQuery):
-    """Показать карточку заказа - с адаптивной клавиатурой"""
+    """Показать карточку заказа"""
     order_id = int(callback.data.split(":")[1])
     debug_print(f"Order view callback: order {order_id} from user {callback.from_user.id}")
 
@@ -124,11 +98,8 @@ async def on_order_view(callback: CallbackQuery):
             return
 
         message_text = build_order_card_message(order, detailed=True)
+        keyboard = order_card_keyboard(order)
 
-        # ВАЖНО: передаем user_id для определения типа клавиатуры
-        keyboard = order_card_keyboard(order, user_id=callback.from_user.id)
-
-        # Редактируем существующее сообщение (оригинальное поведение)
         try:
             await callback.message.edit_text(
                 text=message_text,
@@ -136,27 +107,19 @@ async def on_order_view(callback: CallbackQuery):
             )
         except Exception as e:
             debug_print(f"Failed to edit message: {e}", "WARN")
-            # Если не удалось отредактировать - отправляем новое
-            await callback.bot.send_message(
-                chat_id=callback.message.chat.id,
-                text=message_text,
-                reply_markup=keyboard
-            )
 
     await callback.answer()
 
 
 @router.callback_query(F.data.regexp(r"^order:\d+:back_to_list$"))
 async def on_back_to_list(callback: CallbackQuery):
-    """Кнопка 'До списку' для заказов из меню - возврат к списку"""
+    """Кнопка 'До списку' - возврат к списку"""
     order_id = int(callback.data.split(":")[1])
     debug_print(f"Back to list from order {order_id}, user {callback.from_user.id}")
 
-    # Показываем список, редактируя ТО ЖЕ сообщение
     from .navigation import on_orders_list
     from types import SimpleNamespace
 
-    # Создаем фиктивный callback для списка
     list_callback = SimpleNamespace()
     list_callback.data = "orders:list:new:offset=0"
     list_callback.from_user = callback.from_user
@@ -164,7 +127,6 @@ async def on_back_to_list(callback: CallbackQuery):
     list_callback.message = callback.message
     list_callback.answer = callback.answer
 
-    # Используем существующий обработчик списка
     await on_orders_list(list_callback)
 
 
@@ -175,9 +137,8 @@ async def on_resend_file(callback: CallbackQuery):
     order_id = int(parts[1])
     file_type = parts[3]
 
-    debug_print(f"Resend {file_type} for order {order_id} from user {callback.from_user.id}")
+    debug_print(f"🎯 RESEND: {file_type} for order {order_id} from user {callback.from_user.id}")
 
-    # Очищаем старые файлы этого заказа
     await cleanup_order_files(callback.bot, callback.message.chat.id, callback.from_user.id, order_id)
 
     with get_session() as session:
@@ -235,7 +196,7 @@ async def on_resend_file(callback: CallbackQuery):
                 await callback.answer("✅ VCF відправлено")
 
         except Exception as e:
-            debug_print(f"Error sending {file_type} for order {order_id}: {e}", "ERROR")
+            debug_print(f"Error sending {file_type}: {e}", "ERROR")
             await callback.answer(f"❌ Помилка: {str(e)}", show_alert=True)
 
 
@@ -243,7 +204,7 @@ async def on_resend_file(callback: CallbackQuery):
 async def on_payment_info(callback: CallbackQuery):
     """Кнопка 'Реквізити'"""
     order_id = int(callback.data.split(":")[1])
-    debug_print(f"Payment info for order {order_id} from user {callback.from_user.id}")
+    debug_print(f"💳 PAYMENT: for order {order_id}")
 
     with get_session() as session:
         order = session.get(Order, order_id)
@@ -268,17 +229,12 @@ async def on_payment_info(callback: CallbackQuery):
 
 Передаємо замовлення в роботу після предплати, так як виготовлення повністю індивідуально 
 
-Максимальний термін виготовлення складає 7 робочих днів, одразу по готовності відправляємо замовлення Вам 🚀
-
 🛍 <b>Сума замовлення складає - {order_total} {currency}</b>
 
 Оплату можна здійснити на:
 <b>ФОП Нитяжук Катерина Сергіївна</b>
 <code>UA613220010000026004340089782</code>
-<b>ЕДРПОУ:</b> 3577508940
-<b>Призначення:</b> Оплата за товар 
-
-Надсилаю всю інформацію окремо, щоб вам було зручно копіювати ☺️👇"""
+<b>ЕДРПОУ:</b> 3577508940"""
 
         await cleanup_order_files(callback.bot, callback.message.chat.id, callback.from_user.id, order_id)
 
@@ -307,13 +263,12 @@ async def on_payment_info(callback: CallbackQuery):
 
 @router.callback_query(F.data.contains(":contacted"))
 async def on_contacted(callback: CallbackQuery):
-    """Кнопка 'Зв'язались' - с адаптивной клавиатурой"""
+    """Кнопка 'Зв'язались'"""
     if not check_permission(callback.from_user.id):
-        await callback.answer("❌ У вас немає прав для цієї дії", show_alert=True)
+        await callback.answer("❌ У вас немає прав", show_alert=True)
         return
 
     order_id = int(callback.data.split(":")[1])
-    debug_print(f"Status change to WAITING_PAYMENT for order {order_id} by user {callback.from_user.id}")
 
     with get_session() as session:
         order = session.get(Order, order_id)
@@ -330,13 +285,10 @@ async def on_contacted(callback: CallbackQuery):
         order.processed_by_user_id = callback.from_user.id
         order.processed_by_username = callback.from_user.username or callback.from_user.first_name
 
-        if old_status != OrderStatus.WAITING_PAYMENT:
-            order.waiting_payment_since = datetime.utcnow()
-
         history = OrderStatusHistory(
             order_id=order_id,
             old_status=old_status.value,
-            new_status=OrderStatus.CANCELLED.value,
+            new_status=OrderStatus.WAITING_PAYMENT.value,
             changed_by_user_id=callback.from_user.id,
             changed_by_username=callback.from_user.username or callback.from_user.first_name
         )
@@ -344,33 +296,24 @@ async def on_contacted(callback: CallbackQuery):
         session.commit()
 
         message_text = build_order_card_message(order, detailed=True)
-        # ВАЖНО: передаем user_id для адаптивной клавиатуры
-        keyboard = order_card_keyboard(order, user_id=callback.from_user.id)
+        keyboard = order_card_keyboard(order)
 
         try:
             await callback.message.edit_text(message_text, reply_markup=keyboard)
         except:
             pass
 
-        await callback.answer("❌ Замовлення скасовано")
-
-        order_no = order.order_number or order.id
-        notification_msg = await callback.bot.send_message(
-            callback.message.chat.id,
-            f"❌ Замовлення #{order_no} скасовано"
-        )
-        track_order_file_message(callback.from_user.id, order_id, notification_msg.message_id)
+        await callback.answer("✅ Статус: Очікує оплату")
 
 
 @router.callback_query(F.data.contains(":paid"))
 async def on_paid(callback: CallbackQuery):
-    """Кнопка 'Оплатили' - с адаптивной клавиатурой"""
+    """Кнопка 'Оплатили'"""
     if not check_permission(callback.from_user.id):
-        await callback.answer("❌ У вас немає прав для цієї дії", show_alert=True)
+        await callback.answer("❌ У вас немає прав", show_alert=True)
         return
 
     order_id = int(callback.data.split(":")[1])
-    debug_print(f"Status change to PAID for order {order_id} by user {callback.from_user.id}")
 
     with get_session() as session:
         order = session.get(Order, order_id)
@@ -396,8 +339,7 @@ async def on_paid(callback: CallbackQuery):
         session.commit()
 
         message_text = build_order_card_message(order, detailed=True)
-        # ВАЖНО: передаем user_id для адаптивной клавиатуры
-        keyboard = order_card_keyboard(order, user_id=callback.from_user.id)
+        keyboard = order_card_keyboard(order)
 
         try:
             await callback.message.edit_text(message_text, reply_markup=keyboard)
@@ -406,50 +348,15 @@ async def on_paid(callback: CallbackQuery):
 
         await callback.answer("✅ Замовлення оплачено")
 
-        order_no = order.order_number or order.id
-        notification_msg = await callback.bot.send_message(
-            callback.message.chat.id,
-            f"💰 Замовлення #{order_no} оплачено!"
-        )
-        track_order_file_message(callback.from_user.id, order_id, notification_msg.message_id)
-        OrderStatusHistory(
-            order_id=order_id,
-            old_status=old_status.value,
-            new_status=OrderStatus.WAITING_PAYMENT.value,
-            changed_by_user_id=callback.from_user.id,
-            changed_by_username=callback.from_user.username or callback.from_user.first_name
-        )
-        session.add(history)
-        session.commit()
-
-        message_text = build_order_card_message(order, detailed=True)
-        # ВАЖНО: передаем user_id для адаптивной клавиатуры
-        keyboard = order_card_keyboard(order, user_id=callback.from_user.id)
-
-        try:
-            await callback.message.edit_text(message_text, reply_markup=keyboard)
-        except:
-            pass
-
-        await callback.answer("✅ Статус: Очікує оплату")
-
-        order_no = order.order_number or order.id
-        notification_msg = await callback.bot.send_message(
-            callback.message.chat.id,
-            f"📝 Замовлення #{order_no} • Статус: ⏳ Очікує оплату"
-        )
-        track_order_file_message(callback.from_user.id, order_id, notification_msg.message_id)
-
 
 @router.callback_query(F.data.contains(":cancel"))
 async def on_cancel(callback: CallbackQuery):
-    """Кнопка 'Скасування' - с адаптивной клавиатурой"""
+    """Кнопка 'Скасування'"""
     if not check_permission(callback.from_user.id):
-        await callback.answer("❌ У вас немає прав для цієї дії", show_alert=True)
+        await callback.answer("❌ У вас немає прав", show_alert=True)
         return
 
     order_id = int(callback.data.split(":")[1])
-    debug_print(f"Status change to CANCELLED for order {order_id} by user {callback.from_user.id}")
 
     with get_session() as session:
         order = session.get(Order, order_id)
@@ -464,4 +371,22 @@ async def on_cancel(callback: CallbackQuery):
         old_status = order.status
         order.status = OrderStatus.CANCELLED
 
-        history =
+        history = OrderStatusHistory(
+            order_id=order_id,
+            old_status=old_status.value,
+            new_status=OrderStatus.CANCELLED.value,
+            changed_by_user_id=callback.from_user.id,
+            changed_by_username=callback.from_user.username or callback.from_user.first_name
+        )
+        session.add(history)
+        session.commit()
+
+        message_text = build_order_card_message(order, detailed=True)
+        keyboard = order_card_keyboard(order)
+
+        try:
+            await callback.message.edit_text(message_text, reply_markup=keyboard)
+        except:
+            pass
+
+        await callback.answer("❌ Замовлення скасовано")
