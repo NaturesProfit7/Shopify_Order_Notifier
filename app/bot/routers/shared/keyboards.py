@@ -1,4 +1,4 @@
-# app/bot/routers/shared/keyboards.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# app/bot/routers/shared/keyboards.py - ИСПРАВЛЕННАЯ КНОПКА "До списку"
 """Клавиатуры для бота"""
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -69,7 +69,7 @@ def orders_list_keyboard(kind: str, offset: int, page_size: int,
 
 
 def order_card_keyboard(order: Order) -> InlineKeyboardMarkup:
-    """Клавиатура для карточки заказа с передачей order_id в кнопке 'До списку'"""
+    """Клавиатура для карточки заказа - ИСПРАВЛЕННАЯ НАВИГАЦИЯ"""
     buttons = []
 
     # Кнопки статуса
@@ -102,11 +102,11 @@ def order_card_keyboard(order: Order) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order.id}:reminder")
         ])
 
-    # ИСПРАВЛЕННАЯ навигация - передаем order_id для очистки файлов
+    # ИСПРАВЛЕННАЯ навигация - новый callback для чистого перехода
     buttons.append([
         InlineKeyboardButton(
             text="↩️ До списку",
-            callback_data=f"orders:list:new:offset=0:order={order.id}"
+            callback_data=f"order:{order.id}:back_to_list"  # НОВЫЙ callback
         )
     ])
 

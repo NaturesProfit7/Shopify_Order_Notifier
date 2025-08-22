@@ -135,16 +135,25 @@ async def on_resend_file(callback: CallbackQuery):
                 pdf_bytes, pdf_filename = build_order_pdf(order.raw_json)
                 pdf_file = BufferedInputFile(pdf_bytes, pdf_filename)
 
-                customer_message = f"""💬 <b>Повідомлення клієнту:</b>
+                # ИСПРАВЛЕНИЕ: Чистое сообщение для клиента без префикса
+                from app.services.message_templates import render_simple_confirm_with_contact
+                from app.services.address_utils import get_delivery_and_contact_info, get_contact_name
 
-<i>Вітаю, {order.customer_first_name or 'клієнте'} ☺️
-Ваше замовлення №{order.order_number or order.id}
-Все вірно?</i>"""
+                # Получаем контактные данные (кому адресовать сообщение)
+                _, contact_info = get_delivery_and_contact_info(order.raw_json)
+                contact_first_name, contact_last_name = get_contact_name(contact_info)
+
+                # Формируем чистое сообщение
+                client_message = render_simple_confirm_with_contact(
+                    order.raw_json,
+                    contact_first_name,
+                    contact_last_name
+                )
 
                 pdf_msg = await callback.bot.send_document(
                     chat_id=callback.message.chat.id,
                     document=pdf_file,
-                    caption=customer_message
+                    caption=client_message  # Чистое сообщение как подпись к PDF
                 )
 
                 track_order_file_message(callback.from_user.id, order_id, pdf_msg.message_id)

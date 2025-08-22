@@ -1,4 +1,4 @@
-# app/main.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# app/main.py - ИСПРАВЛЕННАЯ НАВИГАЦИЯ
 import json
 import asyncio
 from contextlib import asynccontextmanager
@@ -11,6 +11,8 @@ from app.services.phone_utils import normalize_ua_phone
 from app.services.vcf_service import build_contact_vcf
 from app.services.pdf_service import build_order_pdf
 from app.services.shopify_service import get_order
+from app.services.address_utils import get_delivery_and_contact_info, get_contact_name, get_contact_phone_e164, \
+    addresses_are_same
 
 from app.bot.main import start_bot, stop_bot, get_bot
 from app.db import get_session
@@ -51,41 +53,42 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-def _extract_customer_name(order: dict) -> tuple[str, str]:
-    cust = (order.get("customer") or {})
-    first = (cust.get("first_name") or "").strip()
-    last = (cust.get("last_name") or "").strip()
+def _extract_customer_data_new_logic(order: dict) -> tuple[str, str, str]:
+    """
+    НОВАЯ ЛОГИКА: извлекает данные контактного лица с учетом разных адресов.
+    Возвращает (first_name, last_name, phone_e164).
+    """
+    # Получаем контактную информацию
+    _, contact_info = get_delivery_and_contact_info(order)
 
-    if not first and not last:
-        ship = (order.get("shipping_address") or {})
-        first = (ship.get("first_name") or "").strip() or first
-        last = (ship.get("last_name") or "").strip() or last
+    # Извлекаем имя контактного лица
+    first_name, last_name = get_contact_name(contact_info)
 
-    if not first and not last:
-        bill = (order.get("billing_address") or {})
-        first = (bill.get("first_name") or "").strip() or first
-        last = (bill.get("last_name") or "").strip() or last
+    # Если нет имени в контактной информации - пробуем customer
+    if not first_name and not last_name:
+        cust = order.get("customer", {})
+        first_name = (cust.get("first_name") or "").strip()
+        last_name = (cust.get("last_name") or "").strip()
 
-    return first, last
+    # Извлекаем телефон контактного лица
+    phone_e164 = get_contact_phone_e164(contact_info)
 
+    # Если нет телефона в контактной информации - пробуем другие источники
+    if not phone_e164:
+        cust = order.get("customer", {})
+        default_addr = cust.get("default_address", {})
 
-def _extract_phone(order: dict) -> str:
-    """Извлекаем телефон из всех возможных мест"""
-    cust = (order.get("customer") or {})
-    default_addr = (cust.get("default_address") or {})
-    ship = (order.get("shipping_address") or {})
-    bill = (order.get("billing_address") or {})
-
-    for v in (
+        for phone_source in [
             cust.get("phone"),
             order.get("phone"),
             default_addr.get("phone"),
-            ship.get("phone"),
-            bill.get("phone"),
-    ):
-        if v and str(v).strip():
-            return str(v).strip()
-    return ""
+        ]:
+            if phone_source and str(phone_source).strip():
+                phone_e164 = normalize_ua_phone(str(phone_source).strip())
+                if phone_e164:
+                    break
+
+    return first_name, last_name, phone_e164 or ""
 
 
 def _display_order_number(order: dict, fallback_id: int | str) -> str:
@@ -106,7 +109,7 @@ def health():
 
 @app.post("/webhooks/shopify/orders")
 async def shopify_webhook(request: Request):
-    """Обработчик webhook от Shopify - исправленная версия"""
+    """Обработчик webhook от Shopify - ИСПРАВЛЕННАЯ НАВИГАЦИЯ"""
     logger.info("=== WEBHOOK RECEIVED ===")
 
     # 1) Получаем и валидируем данные
@@ -182,12 +185,16 @@ async def shopify_webhook(request: Request):
         log_event("webhook_race_condition", order_id=str(order_id))
         return {"status": "duplicate", "order_id": str(order_id)}
 
-    # 5) Извлекаем данные
-    first_name, last_name = _extract_customer_name(order_full)
-    phone_raw = _extract_phone(order_full)
-    phone_e164 = normalize_ua_phone(phone_raw)
+    # 5) Извлекаем данные с НОВОЙ ЛОГИКОЙ адресов
+    first_name, last_name, phone_e164 = _extract_customer_data_new_logic(order_full)
 
-    logger.info(f"Customer: {first_name} {last_name}, Phone: {phone_e164}")
+    # Логируем сценарий адресов
+    shipping = order_full.get('shipping_address', {})
+    billing = order_full.get('billing_address', {})
+    scenario = "same_address" if addresses_are_same(shipping, billing) else "different_addresses"
+
+    logger.info(f"Address scenario: {scenario}")
+    logger.info(f"Contact: {first_name} {last_name}, Phone: {phone_e164}")
 
     chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
     if not chat_id:
@@ -203,6 +210,11 @@ async def shopify_webhook(request: Request):
     try:
         chat_id_int = int(chat_id)
 
+        # Получаем ID основного администратора
+        allowed_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")
+        admin_user_ids = [int(uid.strip()) for uid in allowed_ids.split(",") if uid.strip()]
+        main_admin_id = admin_user_ids[0] if admin_user_ids else 0
+
         # Получаем объект заказа из БД
         with get_session() as session:
             order_obj = session.get(Order, order_id)
@@ -210,9 +222,9 @@ async def shopify_webhook(request: Request):
                 logger.error(f"Order {order_id} not found in DB after processing")
                 raise HTTPException(status_code=500, detail="Database error")
 
-            # НОВЫЙ ФОРМАТ: Основное сообщение с кнопками управления
+            # ИСПРАВЛЕННАЯ НАВИГАЦИЯ: карточка заказа как файл заказа, НЕ навигация
             from app.bot.routers.orders import build_order_card_message
-            from app.bot.routers.shared import order_card_keyboard
+            from app.bot.routers.shared import order_card_keyboard, track_order_file_message
 
             main_message = build_order_card_message(order_obj, detailed=True)
             main_keyboard = order_card_keyboard(order_obj)
@@ -223,23 +235,26 @@ async def shopify_webhook(request: Request):
                 reply_markup=main_keyboard
             )
 
-            # Сохраняем ID основного сообщения для редактирования
+            # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: регистрируем как файл заказа, НЕ как навигацию
+            track_order_file_message(main_admin_id, order_id, main_msg.message_id)
+
+            # Сохраняем ID основного сообщения для редактирования статусов
             await update_telegram_info(
                 order_id,
                 chat_id=str(chat_id),
                 message_id=main_msg.message_id
             )
 
-            # АВТОМАТИЧЕСКИ НЕ ОТПРАВЛЯЕМ PDF/VCF - только по кнопкам
-            # Это убирает дублирование и дает больше контроля менеджеру
-
-            logger.info(f"Main order message sent successfully for order {order_id}")
-            log_event("webhook_processed", order_id=str(order_id), status="success")
+            logger.info(f"Webhook order card sent and tracked as order file")
+            logger.info(f"Contact identified: {first_name} {last_name}")
+            log_event("webhook_processed", order_id=str(order_id), status="success", scenario=scenario,
+                      contact_name=f"{first_name} {last_name}")
 
     except Exception as e:
         logger.error(f"Failed to send via bot: {e}", exc_info=True)
         log_event("bot_send_error", order_id=str(order_id), error=str(e))
         raise HTTPException(status_code=500, detail="Failed to send to Telegram")
 
-    logger.info(f"=== WEBHOOK PROCESSED SUCCESSFULLY for order {order_id} ===")
-    return {"status": "ok", "order_id": str(order_id)}
+    logger.info(f"=== WEBHOOK PROCESSED SUCCESSFULLY for order {order_id} (scenario: {scenario}) ===")
+    return {"status": "ok", "order_id": str(order_id), "scenario": scenario,
+            "contact_name": f"{first_name} {last_name}"}
