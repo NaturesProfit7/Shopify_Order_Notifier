@@ -1,4 +1,4 @@
-# app/main.py - ПОЛНАЯ ВЕРСИЯ С КНОПКОЙ "ЗАКРЫТЬ"
+# app/main.py - WEBHOOK с кнопкой "Закрити"
 import json
 import asyncio
 from contextlib import asynccontextmanager
@@ -8,9 +8,6 @@ import hmac, hashlib, base64
 from app.config import get_shopify_webhook_secret
 
 from app.services.phone_utils import normalize_ua_phone
-from app.services.vcf_service import build_contact_vcf
-from app.services.pdf_service import build_order_pdf
-from app.services.shopify_service import get_order
 from app.services.address_utils import get_delivery_and_contact_info, get_contact_name, get_contact_phone_e164, \
     addresses_are_same
 
@@ -109,7 +106,7 @@ def health():
 
 @app.post("/webhooks/shopify/orders")
 async def shopify_webhook(request: Request):
-    """Обработчик webhook от Shopify с кнопкой 'Закрыть'"""
+    """Обработчик webhook от Shopify - ОТДЕЛЬНЫЕ сообщения с кнопкой 'Закрити'"""
     logger.info("=== WEBHOOK RECEIVED ===")
 
     # 1) Получаем и валидируем данные
@@ -150,6 +147,8 @@ async def shopify_webhook(request: Request):
 
     # 3) Получаем полные данные заказа
     try:
+        from app.services.shopify_service import get_order
+
         # Если webhook содержит полные данные - используем их
         if len(event) > 5 and "line_items" in event:  # Полные данные заказа
             order_full = event
@@ -201,7 +200,7 @@ async def shopify_webhook(request: Request):
         logger.error("TELEGRAM_TARGET_CHAT_ID not set!")
         raise HTTPException(status_code=500, detail="Telegram chat ID not configured")
 
-    # 6) Отправляем через aiogram бота с кнопкой "Закрыть"
+    # 6) Отправляем ОТДЕЛЬНОЕ сообщение с кнопкой "Закрити"
     bot = get_bot()
     if not bot:
         logger.error("Bot instance not available!")
@@ -210,11 +209,6 @@ async def shopify_webhook(request: Request):
     try:
         chat_id_int = int(chat_id)
 
-        # Получаем ID основного администратора
-        allowed_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")
-        admin_user_ids = [int(uid.strip()) for uid in allowed_ids.split(",") if uid.strip()]
-        main_admin_id = admin_user_ids[0] if admin_user_ids else 0
-
         # Получаем объект заказа из БД
         with get_session() as session:
             order_obj = session.get(Order, order_id)
@@ -222,33 +216,60 @@ async def shopify_webhook(request: Request):
                 logger.error(f"Order {order_id} not found in DB after processing")
                 raise HTTPException(status_code=500, detail="Database error")
 
-            # WEBHOOK заказы приходят БЕЗ активного меню у пользователя
+            # WEBHOOK заказ: отправляется ОТДЕЛЬНО (не как navigation!)
             from app.bot.routers.orders import build_order_card_message
-            from app.bot.routers.shared import order_card_keyboard
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
             main_message = build_order_card_message(order_obj, detailed=True)
 
-            # ВАЖНО: передаем main_admin_id для адаптивной клавиатуры
-            # Поскольку это webhook - у админа нет активного меню, будет кнопка "Закрыть"
-            main_keyboard = order_card_keyboard(order_obj, user_id=main_admin_id)
+            # ПРОСТАЯ клавиатура с кнопкой "Закрити"
+            webhook_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                # Кнопки статуса (если NEW)
+                [
+                    InlineKeyboardButton(text="✅ Зв'язались", callback_data=f"order:{order_id}:contacted"),
+                    InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order_id}:cancel")
+                ] if order_obj.status == OrderStatus.NEW else (
+                    [
+                        InlineKeyboardButton(text="💰 Оплатили", callback_data=f"order:{order_id}:paid"),
+                        InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order_id}:cancel")
+                    ] if order_obj.status == OrderStatus.WAITING_PAYMENT else []
+                ),
 
-            main_msg = await bot.send_message(
+                # Файлы
+                [
+                    InlineKeyboardButton(text="📄 PDF", callback_data=f"order:{order_id}:resend:pdf"),
+                    InlineKeyboardButton(text="📱 VCF", callback_data=f"order:{order_id}:resend:vcf")
+                ],
+
+                # Реквизиты
+                [
+                    InlineKeyboardButton(text="💳 Реквізити", callback_data=f"order:{order_id}:payment")
+                ],
+
+                # Дополнительные действия (для активных заказов)
+                [
+                    InlineKeyboardButton(text="💬 Коментар", callback_data=f"order:{order_id}:comment"),
+                    InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order_id}:reminder")
+                ] if order_obj.status in [OrderStatus.NEW, OrderStatus.WAITING_PAYMENT] else [],
+
+                # КНОПКА ЗАКРЫТЬ для webhook заказов
+                [
+                    InlineKeyboardButton(text="❌ Закрити", callback_data=f"webhook:{order_id}:close")
+                ]
+            ])
+
+            # Отправляем ОТДЕЛЬНОЕ сообщение (НЕ через navigation!)
+            webhook_msg = await bot.send_message(
                 chat_id=chat_id_int,
                 text=main_message,
-                reply_markup=main_keyboard
+                reply_markup=webhook_keyboard
             )
 
-            # НЕ трекаем как файл заказа! Это standalone сообщение из webhook
-            # Оно должно удаляться кнопкой "Закрыть" полностью
+            # Трекаем как WEBHOOK сообщение
+            from app.bot.routers.shared import add_webhook_message
+            add_webhook_message(order_id, webhook_msg.message_id)
 
-            # Сохраняем ID основного сообщения для редактирования статусов
-            await update_telegram_info(
-                order_id,
-                chat_id=str(chat_id),
-                message_id=main_msg.message_id
-            )
-
-            logger.info(f"Webhook order card sent with 'Close' button")
+            logger.info(f"Webhook order card sent with 'Закрити' button: message_id {webhook_msg.message_id}")
             logger.info(f"Contact identified: {first_name} {last_name}")
             log_event("webhook_processed", order_id=str(order_id), status="success", scenario=scenario,
                       contact_name=f"{first_name} {last_name}")

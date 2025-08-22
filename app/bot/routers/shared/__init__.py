@@ -1,4 +1,4 @@
-# app/bot/routers/shared/__init__.py
+# app/bot/routers/shared/__init__.py - ОБНОВЛЕННЫЙ
 """Общие компоненты для роутеров бота"""
 
 from .utils import (
@@ -21,7 +21,14 @@ from .state import (
     add_order_file_message,
     get_order_file_messages,
     clear_order_file_messages,
-    clear_all_user_files
+    clear_all_user_files,
+    # НОВЫЕ функции для webhook
+    add_webhook_message,
+    get_webhook_messages,
+    clear_webhook_messages,
+    is_webhook_message,
+    get_order_by_webhook_message,
+    user_order_files  # Экспортируем для webhook роутера
 )
 
 from .keyboards import (
@@ -46,7 +53,7 @@ __all__ = [
     'safe_edit_message',
     'safe_delete_message',
 
-    # State
+    # State - базовые
     'get_navigation_message_id',
     'set_navigation_message_id',
     'remove_navigation_message_id',
@@ -54,6 +61,14 @@ __all__ = [
     'get_order_file_messages',
     'clear_order_file_messages',
     'clear_all_user_files',
+
+    # State - webhook
+    'add_webhook_message',
+    'get_webhook_messages',
+    'clear_webhook_messages',
+    'is_webhook_message',
+    'get_order_by_webhook_message',
+    'user_order_files',
 
     # Keyboards
     'main_menu_keyboard',

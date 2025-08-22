@@ -1,4 +1,4 @@
-# app/bot/routers/shared/utils.py - ПОЛНАЯ ВЕРСИЯ
+# app/bot/routers/shared/utils.py - ОБНОВЛЕННАЯ ВЕРСИЯ
 """Общие утилиты для работы с ботом"""
 
 import os
@@ -15,7 +15,13 @@ from .state import (
     add_navigation_message,
     get_all_navigation_messages,
     clear_all_navigation_messages,
-    remove_navigation_message
+    remove_navigation_message,
+    # НОВЫЕ функции для webhook
+    add_webhook_message,
+    get_webhook_messages,
+    clear_webhook_messages,
+    is_webhook_message,
+    get_order_by_webhook_message
 )
 
 

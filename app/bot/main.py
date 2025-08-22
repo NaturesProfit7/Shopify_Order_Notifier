@@ -1,4 +1,4 @@
-# app/bot/main.py - ПОЛНАЯ ВЕРСИЯ
+# app/bot/main.py - С РЕГИСТРАЦИЕЙ WEBHOOK РОУТЕРА
 import asyncio
 import os
 from datetime import datetime, timedelta
@@ -61,7 +61,7 @@ class TelegramBot:
         self._setup_scheduler()
 
         self.initialized = True
-        logger.info("TelegramBot initialized with FSM storage and improved reminders")
+        logger.info("TelegramBot initialized with webhook router support")
 
     def _register_handlers(self):
         """Регистрация всех хендлеров"""
@@ -69,12 +69,16 @@ class TelegramBot:
             logger.info("Starting handler registration...")
 
             # Импортируем роутеры
-            from app.bot.routers import commands, navigation, orders, management, test_commands
+            from app.bot.routers import commands, navigation, orders, management, test_commands, webhook
 
             logger.info("All routers imported successfully")
 
             # Регистрируем роутеры в правильном порядке
-            # ВАЖНО: management первым для FSM
+            # ВАЖНО: webhook первым для обработки кнопки "Закрити"
+            self.dp.include_router(webhook.router)
+            logger.info("✅ Webhook router registered (priority)")
+
+            # ВАЖНО: management вторым для FSM
             self.dp.include_router(management.router)
             logger.info("✅ Management router registered (FSM)")
 
@@ -114,7 +118,7 @@ class TelegramBot:
             replace_existing=True
         )
 
-        # 3. НОВОЕ: Ежедневное напоминание об оплате в 10:30
+        # 3. Ежедневное напоминание об оплате в 10:30
         self.scheduler.add_job(
             self._check_payment_reminders,
             trigger=CronTrigger(hour=10, minute=30, timezone="Europe/Kiev"),
@@ -151,14 +155,12 @@ class TelegramBot:
 
                 message = f"🆕 <b>Необроблені замовлення ({len(new_orders)} шт):</b>\n\n"
 
-                for order in new_orders[:15]:  # ИЗМЕНЕНО: до 15 заказов
+                for order in new_orders[:15]:
                     order_no = order.order_number or order.id
                     customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
 
-                    # ИСПРАВЛЕНО: Правильная работа с datetime
                     now_utc = datetime.utcnow()
 
-                    # Если created_at имеет timezone, конвертируем в UTC
                     if order.created_at.tzinfo is not None:
                         order_created_utc = order.created_at.astimezone(pytz.UTC).replace(tzinfo=None)
                     else:
@@ -168,15 +170,14 @@ class TelegramBot:
                     hours = int(elapsed.total_seconds() // 3600)
                     minutes = int((elapsed.total_seconds() % 3600) // 60)
 
-                    # ОБНОВЛЕННАЯ система приоритетов: 📍🔥⚠️🚨
-                    if hours >= 3:  # ИЗМЕНЕНО: было 4
-                        urgency = "🚨"  # Критично!
-                    elif hours >= 2:  # было 2
-                        urgency = "⚠️"  # Внимание
-                    elif hours >= 1:  # было 1
-                        urgency = "🔥"  # Срочно
+                    if hours >= 3:
+                        urgency = "🚨"
+                    elif hours >= 2:
+                        urgency = "⚠️"
+                    elif hours >= 1:
+                        urgency = "🔥"
                     else:
-                        urgency = "📍"  # Новый
+                        urgency = "📍"
 
                     message += f"{urgency} №{order_no} • {customer}"
 
@@ -188,7 +189,6 @@ class TelegramBot:
                 if len(new_orders) > 15:
                     message += f"\n<i>...та ще {len(new_orders) - 15} замовлень</i>\n"
 
-                # ОБНОВЛЕННАЯ мотивирующая подпись
                 message += f"\n🚀 <i>Час перетворити заявки в замовлення!</i>"
 
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -210,7 +210,7 @@ class TelegramBot:
             logger.error(f"Error checking new orders: {e}", exc_info=True)
 
     async def _check_payment_reminders(self):
-        """НОВОЕ: Ежедневное напоминание об оплате в 10:30"""
+        """Ежедневное напоминание об оплате в 10:30"""
         try:
             with get_session() as session:
                 waiting_orders = session.query(Order).filter(
@@ -223,21 +223,18 @@ class TelegramBot:
 
                 message = f"💰 <b>Очікують оплату ({len(waiting_orders)} шт):</b>\n\n"
 
-                for order in waiting_orders[:15]:  # Показываем больше заказов
+                for order in waiting_orders[:15]:
                     order_no = order.order_number or order.id
                     customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
 
-                    # ОБНОВЛЕНО: Используем waiting_payment_since если есть, иначе updated_at
                     now_utc = datetime.utcnow()
 
                     if order.waiting_payment_since:
-                        # Используем точное время перехода в WAITING_PAYMENT
                         if order.waiting_payment_since.tzinfo is not None:
                             waiting_since_utc = order.waiting_payment_since.astimezone(pytz.UTC).replace(tzinfo=None)
                         else:
                             waiting_since_utc = order.waiting_payment_since
                     else:
-                        # Fallback на updated_at для старых заказов
                         if order.updated_at.tzinfo is not None:
                             waiting_since_utc = order.updated_at.astimezone(pytz.UTC).replace(tzinfo=None)
                         else:
@@ -247,15 +244,14 @@ class TelegramBot:
                     hours = int(elapsed.total_seconds() // 3600)
                     days = hours // 24
 
-                    # ОБНОВЛЕННАЯ система приоритетов: 📍🔥⚠️🚨
-                    if days >= 2:  # ИЗМЕНЕНО: было 3
-                        urgency = "🚨"  # Критично!
-                    elif days >= 1:  # было 1
-                        urgency = "⚠️"  # Внимание
-                    elif hours >= 12:  # было 12
-                        urgency = "🔥"  # Срочно
+                    if days >= 2:
+                        urgency = "🚨"
+                    elif days >= 1:
+                        urgency = "⚠️"
+                    elif hours >= 12:
+                        urgency = "🔥"
                     else:
-                        urgency = "📍"  # Недавно
+                        urgency = "📍"
 
                     message += f"{urgency} №{order_no} • {customer}"
 
