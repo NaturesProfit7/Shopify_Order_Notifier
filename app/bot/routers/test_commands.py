@@ -1,4 +1,4 @@
-# app/bot/routers/test_commands.py
+# app/bot/routers/test_commands.py - ПОЛНОЕ ИГНОРИРОВАНИЕ НЕАВТОРИЗОВАННЫХ
 """Тестовые команды для проверки уведомлений"""
 
 from aiogram import Router, F
@@ -12,13 +12,11 @@ router = Router()
 
 @router.message(Command("test_hourly"))
 async def test_hourly_reminder(message: Message):
-    """Тестовая команда для проверки ежечасного напоминания о новых заказах"""
-
+    """Тестовая команда для проверки ежечасного напоминания - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
     if not check_permission(message.from_user.id):
-        await message.reply("❌ У вас немає прав для цієї команди")
         return
 
-    debug_print(f"Manual hourly reminder test by user {message.from_user.id}")
+    debug_print(f"Manual hourly reminder test by authorized user {message.from_user.id}")
 
     try:
         # Удаляем команду пользователя
@@ -58,13 +56,11 @@ async def test_hourly_reminder(message: Message):
 
 @router.message(Command("test_daily"))
 async def test_daily_reminder(message: Message):
-    """Тестовая команда для проверки ежедневного напоминания об оплате"""
-
+    """Тестовая команда для проверки ежедневного напоминания - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
     if not check_permission(message.from_user.id):
-        await message.reply("❌ У вас немає прав для цієї команди")
         return
 
-    debug_print(f"Manual daily reminder test by user {message.from_user.id}")
+    debug_print(f"Manual daily reminder test by authorized user {message.from_user.id}")
 
     try:
         # Удаляем команду пользователя
@@ -97,13 +93,11 @@ async def test_daily_reminder(message: Message):
 
 @router.message(Command("test_reminder"))
 async def test_individual_reminder(message: Message):
-    """Тестовая команда для проверки индивидуальных напоминаний"""
-
+    """Тестовая команда для проверки индивидуальных напоминаний - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
     if not check_permission(message.from_user.id):
-        await message.reply("❌ У вас немає прав для цієї команди")
         return
 
-    debug_print(f"Manual individual reminder test by user {message.from_user.id}")
+    debug_print(f"Manual individual reminder test by authorized user {message.from_user.id}")
 
     try:
         # Удаляем команду пользователя
@@ -136,10 +130,8 @@ async def test_individual_reminder(message: Message):
 
 @router.message(Command("test_time"))
 async def test_working_hours(message: Message):
-    """Тестовая команда для проверки рабочего времени"""
-
+    """Тестовая команда для проверки рабочего времени - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
     if not check_permission(message.from_user.id):
-        await message.reply("❌ У вас немає прав для цієї команди")
         return
 
     try:
@@ -184,10 +176,8 @@ async def test_working_hours(message: Message):
 
 @router.message(Command("get_order"))
 async def get_order_json(message: Message):
-    """Получить JSON заказа - /get_order 123456"""
-
+    """Получить JSON заказа - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
     if not check_permission(message.from_user.id):
-        await message.reply("❌ У вас немає прав для цієї команди")
         return
 
     try:
@@ -209,7 +199,7 @@ async def get_order_json(message: Message):
             return
 
         order_id = int(parts[1])
-        debug_print(f"Getting JSON for order {order_id} by user {message.from_user.id}")
+        debug_print(f"Getting JSON for order {order_id} by authorized user {message.from_user.id}")
 
         from app.services.shopify_service import get_order
         order_data = get_order(order_id)
@@ -268,10 +258,8 @@ async def get_order_json(message: Message):
 
 @router.message(Command("test_help"))
 async def test_help(message: Message):
-    """Справка по тестовым командам"""
-
+    """Справка по тестовым командам - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
     if not check_permission(message.from_user.id):
-        await message.reply("❌ У вас немає прав для цієї команди")
         return
 
     try:
@@ -289,6 +277,7 @@ async def test_help(message: Message):
 
 <b>Утиліти:</b>
 /test_time - перевірка робочого часу
+/get_order ORDER_ID - отримати JSON заказа
 /test_help - ця довідка
 
 <b>Примітка:</b>

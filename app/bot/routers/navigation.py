@@ -1,4 +1,4 @@
-# app/bot/routers/navigation.py - ПОЛНАЯ ВЕРСИЯ С ОЧИСТКОЙ ФАЙЛОВ
+# app/bot/routers/navigation.py - ПОЛНОЕ ИГНОРИРОВАНИЕ НЕАВТОРИЗОВАННЫХ
 """Роутер для навигации: главное меню, списки заказов, статистика"""
 
 from datetime import datetime
@@ -11,6 +11,7 @@ from app.bot.services.message_builder import get_status_emoji
 
 from .shared import (
     debug_print,
+    check_permission,
     update_navigation_message,
     track_navigation_message,
     cleanup_all_navigation,
@@ -48,8 +49,12 @@ def _is_from_notification(callback: CallbackQuery) -> bool:
 
 @router.callback_query(F.data == "menu:main")
 async def on_main_menu(callback: CallbackQuery):
-    """Главное меню"""
-    debug_print(f"Main menu callback from user {callback.from_user.id}")
+    """Главное меню - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
+    if not check_permission(callback.from_user.id):
+        return
+
+    debug_print(f"Main menu callback from authorized user {callback.from_user.id}")
 
     await update_navigation_message(
         callback.bot,
@@ -63,8 +68,12 @@ async def on_main_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data.regexp(r"^orders:list:(new|pending|all|waiting):offset=\d+$"))
 async def on_orders_list(callback: CallbackQuery):
-    """Список заказов - с поддержкой чистых переходов из уведомлений И очисткой файлов"""
-    debug_print(f"Orders list callback: {callback.data} from user {callback.from_user.id}")
+    """Список заказов - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
+    if not check_permission(callback.from_user.id):
+        return
+
+    debug_print(f"Orders list callback: {callback.data} from authorized user {callback.from_user.id}")
 
     parts = callback.data.split(":")
     if len(parts) < 4:
@@ -187,8 +196,12 @@ async def on_orders_list(callback: CallbackQuery):
 
 @router.callback_query(F.data == "stats:show")
 async def on_stats_show(callback: CallbackQuery):
-    """Показать статистику"""
-    debug_print(f"Stats callback from user {callback.from_user.id}")
+    """Показать статистику - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
+    if not check_permission(callback.from_user.id):
+        return
+
+    debug_print(f"Stats callback from authorized user {callback.from_user.id}")
 
     with get_session() as session:
         total = session.query(Order).count()
@@ -228,13 +241,21 @@ async def on_stats_show(callback: CallbackQuery):
 
 @router.callback_query(F.data == "stats:refresh")
 async def on_stats_refresh(callback: CallbackQuery):
-    """Обновить статистику"""
-    debug_print(f"Stats refresh from user {callback.from_user.id}")
+    """Обновить статистику - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
+    if not check_permission(callback.from_user.id):
+        return
+
+    debug_print(f"Stats refresh from authorized user {callback.from_user.id}")
     callback.data = "stats:show"
     await on_stats_show(callback)
 
 
 @router.callback_query(F.data == "noop")
 async def on_noop(callback: CallbackQuery):
-    """Пустой обработчик для информационных кнопок"""
+    """Пустой обработчик - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
+    if not check_permission(callback.from_user.id):
+        return
+
     await callback.answer()

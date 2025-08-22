@@ -1,4 +1,4 @@
-# app/bot/routers/shared/utils.py - ПОЛНАЯ ВЕРСИЯ С ИСПРАВЛЕНИЕМ
+# app/bot/routers/shared/utils.py - ПОЛНОЕ ИГНОРИРОВАНИЕ НЕАВТОРИЗОВАННЫХ
 """Общие утилиты для работы с ботом"""
 
 import os
@@ -32,10 +32,38 @@ def debug_print(message: str, level: str = "INFO") -> None:
 
 
 def check_permission(user_id: int) -> bool:
-    """Проверка прав доступа"""
-    allowed_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")
-    allowed = [int(uid.strip()) for uid in allowed_ids.split(",") if uid.strip()]
-    return not allowed or user_id in allowed
+    """
+    УЖЕСТОЧЕННАЯ проверка прав доступа.
+    Если список TELEGRAM_ALLOWED_USER_IDS задан - доступ ТОЛЬКО для указанных ID.
+    Если список пустой - доступа НЕТ ни у кого (безопасность по умолчанию).
+    """
+    allowed_ids_str = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").strip()
+
+    # Если переменная не задана или пустая - доступа НЕТ ни у кого
+    if not allowed_ids_str:
+        debug_print(f"🔇 SILENT BLOCK: No allowed users configured", "WARN")
+        return False
+
+    try:
+        allowed = [int(uid.strip()) for uid in allowed_ids_str.split(",") if uid.strip()]
+
+        # Если список не удалось распарсить - доступа НЕТ
+        if not allowed:
+            debug_print(f"🔇 SILENT BLOCK: Failed to parse allowed users list", "WARN")
+            return False
+
+        is_allowed = user_id in allowed
+
+        if is_allowed:
+            debug_print(f"✅ ACCESS GRANTED: User {user_id} is authorized")
+        else:
+            debug_print(f"🔇 SILENT BLOCK: User {user_id} ignored (not in allowed list)", "WARN")
+
+        return is_allowed
+
+    except Exception as e:
+        debug_print(f"🔇 SILENT BLOCK: Error checking permissions for user {user_id}: {e}", "ERROR")
+        return False
 
 
 def format_phone_compact(e164: str) -> str:

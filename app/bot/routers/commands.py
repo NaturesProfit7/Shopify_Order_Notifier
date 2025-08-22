@@ -1,4 +1,4 @@
-# app/bot/routers/commands.py - РЕФАКТОРИНГ
+# app/bot/routers/commands.py - ПОЛНОЕ ИГНОРИРОВАНИЕ НЕАВТОРИЗОВАННЫХ
 from aiogram import Router
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
@@ -9,6 +9,7 @@ from datetime import datetime
 
 from .shared import (
     debug_print,
+    check_permission,
     track_navigation_message,
     update_navigation_message,
     main_menu_keyboard,
@@ -33,8 +34,13 @@ async def send_main_menu(bot, chat_id: int, user_id: int) -> None:
 
 @router.message(CommandStart())
 async def on_start(msg: Message):
-    """Команда /start"""
-    debug_print(f"/start command from user {msg.from_user.id}")
+    """Команда /start - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
+    if not check_permission(msg.from_user.id):
+        # НЕ отвечаем вообще - полное игнорирование
+        return
+
+    debug_print(f"/start command from authorized user {msg.from_user.id}")
 
     # Удаляем команду пользователя
     try:
@@ -73,8 +79,12 @@ async def on_start(msg: Message):
 
 @router.message(Command(commands=["menu"]))
 async def on_menu_command(msg: Message):
-    """Команда /menu"""
-    debug_print(f"/menu command from user {msg.from_user.id}")
+    """Команда /menu - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
+    if not check_permission(msg.from_user.id):
+        return
+
+    debug_print(f"/menu command from authorized user {msg.from_user.id}")
 
     # Удаляем команду пользователя
     try:
@@ -96,8 +106,12 @@ async def on_menu_command(msg: Message):
 
 @router.message(Command(commands=["stats"]))
 async def on_stats_command(msg: Message):
-    """Команда /stats - показать статистику"""
-    debug_print(f"/stats command from user {msg.from_user.id}")
+    """Команда /stats - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
+    if not check_permission(msg.from_user.id):
+        return
+
+    debug_print(f"/stats command from authorized user {msg.from_user.id}")
 
     # Удаляем команду пользователя
     try:
@@ -141,8 +155,12 @@ async def on_stats_command(msg: Message):
 
 @router.message(Command(commands=["pending"]))
 async def on_pending_command(msg: Message):
-    """Команда /pending - показать необработанные заказы"""
-    debug_print(f"/pending command from user {msg.from_user.id}")
+    """Команда /pending - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
+    if not check_permission(msg.from_user.id):
+        return
+
+    debug_print(f"/pending command from authorized user {msg.from_user.id}")
 
     # Удаляем команду пользователя
     try:
@@ -191,8 +209,12 @@ async def on_pending_command(msg: Message):
 
 @router.message(Command(commands=["help"]))
 async def on_help_command(msg: Message):
-    """Команда /help - показать справку"""
-    debug_print(f"/help command from user {msg.from_user.id}")
+    """Команда /help - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
+    if not check_permission(msg.from_user.id):
+        return
+
+    debug_print(f"/help command from authorized user {msg.from_user.id}")
 
     # Удаляем команду пользователя
     try:
@@ -236,7 +258,13 @@ async def on_help_command(msg: Message):
 # Обработчик для всех остальных текстовых сообщений
 @router.message()
 async def on_any_message(msg: Message):
-    """Обработчик любых других сообщений"""
+    """Обработчик любых других сообщений - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
+    if not check_permission(msg.from_user.id):
+        return
+
+    debug_print(f"Any message from authorized user {msg.from_user.id}: {msg.text}")
+
     # Удаляем сообщение пользователя (если это не команда)
     if not msg.text or not msg.text.startswith('/'):
         try:

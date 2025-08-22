@@ -1,4 +1,4 @@
-# app/bot/routers/management.py - ОЧИЩЕННАЯ ВЕРСИЯ БЕЗ КОНФЛИКТОВ
+# app/bot/routers/management.py - ПОЛНОЕ ИГНОРИРОВАНИЕ НЕАВТОРИЗОВАННЫХ
 """Роутер для управления заказами: комментарии, напоминания"""
 
 from datetime import datetime, timedelta
@@ -26,13 +26,12 @@ class CommentStates(StatesGroup):
 
 @router.callback_query(F.data.contains(":comment"))
 async def on_comment_button(callback: CallbackQuery, state: FSMContext):
-    """Кнопка 'Коментар' - запуск FSM для ввода комментария"""
+    """Кнопка 'Коментар' - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
     if not check_permission(callback.from_user.id):
-        await callback.answer("❌ У вас немає прав для цієї дії", show_alert=True)
         return
 
     order_id = int(callback.data.split(":")[1])
-    debug_print(f"Comment request for order {order_id} from user {callback.from_user.id}")
+    debug_print(f"Comment request for order {order_id} from authorized user {callback.from_user.id}")
 
     with get_session() as session:
         order = session.get(Order, order_id)
@@ -58,14 +57,12 @@ async def on_comment_button(callback: CallbackQuery, state: FSMContext):
 
 @router.message(CommentStates.waiting_for_comment)
 async def process_comment(message: Message, state: FSMContext):
-    """Обработка введенного комментария"""
-    debug_print(f"Received comment message from user {message.from_user.id}")
-
+    """Обработка введенного комментария - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
     if not check_permission(message.from_user.id):
-        debug_print("Permission denied for comment")
-        await message.reply("❌ У вас немає прав для цієї дії")
         await state.clear()
         return
+
+    debug_print(f"Received comment message from authorized user {message.from_user.id}")
 
     data = await state.get_data()
     order_id = data.get("order_id")
@@ -142,13 +139,12 @@ async def process_comment(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.contains(":reminder"))
 async def on_reminder_button(callback: CallbackQuery):
-    """Кнопка 'Нагадати' - показать выбор времени"""
+    """Кнопка 'Нагадати' - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
     if not check_permission(callback.from_user.id):
-        await callback.answer("❌ У вас немає прав для цієї дії", show_alert=True)
         return
 
     order_id = int(callback.data.split(":")[1])
-    debug_print(f"Reminder setup for order {order_id} from user {callback.from_user.id}")
+    debug_print(f"Reminder setup for order {order_id} from authorized user {callback.from_user.id}")
 
     from .shared import reminder_time_keyboard
     keyboard = reminder_time_keyboard(order_id)
@@ -163,9 +159,8 @@ async def on_reminder_button(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("reminder:"))
 async def handle_reminder_time(callback: CallbackQuery):
-    """Обработка выбора времени напоминания"""
+    """Обработка выбора времени напоминания - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
     if not check_permission(callback.from_user.id):
-        await callback.answer("❌ У вас немає прав для цієї дії", show_alert=True)
         return
 
     parts = callback.data.split(":")
@@ -202,6 +197,3 @@ async def handle_reminder_time(callback: CallbackQuery):
             time_text = "завтра"
 
         await callback.answer(f"✅ Нагадування встановлено через {time_text}")
-
-
-# УДАЛЕН старый обработчик on_back_to_order - он конфликтовал!

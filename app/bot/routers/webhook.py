@@ -1,4 +1,4 @@
-# app/bot/routers/webhook.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# app/bot/routers/webhook.py - ПОЛНОЕ ИГНОРИРОВАНИЕ НЕАВТОРИЗОВАННЫХ
 """Роутер для обработки webhook заказов с кнопкой 'Закрити'"""
 
 from aiogram import Router, F
@@ -6,6 +6,7 @@ from aiogram.types import CallbackQuery
 
 from .shared import (
     debug_print,
+    check_permission,
     get_webhook_messages,
     clear_webhook_messages,
     get_order_file_messages,
@@ -60,7 +61,9 @@ async def cleanup_webhook_order(bot, chat_id: int, order_id: int) -> None:
 
 @router.callback_query(F.data.startswith("webhook:") & F.data.contains(":close"))
 async def on_webhook_close(callback: CallbackQuery):
-    """Кнопка 'Закрити' для webhook заказов - удаляем ВСЕ связанные сообщения"""
+    """Кнопка 'Закрити' для webhook заказов - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    if not check_permission(callback.from_user.id):
+        return
 
     parts = callback.data.split(":")
     if len(parts) != 3:
@@ -68,7 +71,7 @@ async def on_webhook_close(callback: CallbackQuery):
         return
 
     order_id = int(parts[1])
-    debug_print(f"🚨 WEBHOOK CLOSE: order {order_id} from user {callback.from_user.id}")
+    debug_print(f"🚨 WEBHOOK CLOSE: order {order_id} from authorized user {callback.from_user.id}")
 
     # Удаляем ВСЕ сообщения этого webhook заказа
     await cleanup_webhook_order(
@@ -80,9 +83,9 @@ async def on_webhook_close(callback: CallbackQuery):
     # Отвечаем на callback (чтобы убрать "часики" в Telegram)
     await callback.answer("✅ Замовлення закрито")
 
-    debug_print(f"✅ Webhook order {order_id} completely closed")
+    debug_print(f"✅ Webhook order {order_id} completely closed by authorized user {callback.from_user.id}")
 
 
 # УДАЛЕНЫ ПРОБЛЕМНЫЕ ОБРАБОТЧИКИ
 # Они конфликтовали с основными роутерами orders.py и management.py
-# Теперь webhook роутер обрабатывает ТОЛЬКО кнопку "Закрити"
+# Теперь webhook роутер обрабатывает ТОЛЬКО кнопку "Закрити" с полным игнорированием неавторизованных
