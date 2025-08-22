@@ -113,13 +113,24 @@ async def on_order_view(callback: CallbackQuery):
 
 @router.callback_query(F.data.regexp(r"^order:\d+:back_to_list$"))
 async def on_back_to_list(callback: CallbackQuery):
-    """Кнопка 'До списку' - возврат к списку"""
+    """Кнопка 'До списку' - возврат к списку с ОЧИСТКОЙ всех файлов заказа"""
     order_id = int(callback.data.split(":")[1])
-    debug_print(f"Back to list from order {order_id}, user {callback.from_user.id}")
+    debug_print(f"🔙 BACK TO LIST: order {order_id}, user {callback.from_user.id}")
 
+    # 1. ОЧИЩАЕМ ВСЕ ФАЙЛЫ ЗАКАЗА для текущего пользователя
+    await cleanup_order_files(
+        callback.bot,
+        callback.message.chat.id,
+        callback.from_user.id,
+        order_id
+    )
+    debug_print(f"✅ Cleaned up files for order {order_id}")
+
+    # 2. Переходим к списку заказов
     from .navigation import on_orders_list
     from types import SimpleNamespace
 
+    # Создаем фиктивный callback для списка NEW заказов
     list_callback = SimpleNamespace()
     list_callback.data = "orders:list:new:offset=0"
     list_callback.from_user = callback.from_user
@@ -127,6 +138,7 @@ async def on_back_to_list(callback: CallbackQuery):
     list_callback.message = callback.message
     list_callback.answer = callback.answer
 
+    debug_print(f"🔙 Switching to orders list...")
     await on_orders_list(list_callback)
 
 

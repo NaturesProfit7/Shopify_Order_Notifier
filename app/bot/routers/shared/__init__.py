@@ -9,6 +9,8 @@ from .utils import (
     track_order_file_message,
     cleanup_order_files,
     cleanup_all_navigation,
+    cleanup_all_user_order_files,  # НОВАЯ ФУНКЦИЯ
+    is_coming_from_order_card,     # НОВАЯ ФУНКЦИЯ
     update_navigation_message,
     safe_edit_message,
     safe_delete_message
@@ -49,6 +51,8 @@ __all__ = [
     'track_order_file_message',
     'cleanup_order_files',
     'cleanup_all_navigation',
+    'cleanup_all_user_order_files',  # ДОБАВЛЕНО
+    'is_coming_from_order_card',     # ДОБАВЛЕНО
     'update_navigation_message',
     'safe_edit_message',
     'safe_delete_message',

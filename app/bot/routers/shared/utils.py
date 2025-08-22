@@ -1,4 +1,4 @@
-# app/bot/routers/shared/utils.py - ОБНОВЛЕННАЯ ВЕРСИЯ
+# app/bot/routers/shared/utils.py - ПОЛНАЯ ВЕРСИЯ
 """Общие утилиты для работы с ботом"""
 
 import os
@@ -16,6 +16,7 @@ from .state import (
     get_all_navigation_messages,
     clear_all_navigation_messages,
     remove_navigation_message,
+    clear_all_user_files,
     # НОВЫЕ функции для webhook
     add_webhook_message,
     get_webhook_messages,
@@ -42,6 +43,20 @@ def format_phone_compact(e164: str) -> str:
     if not e164:
         return "Не вказано"
     return e164
+
+
+def is_coming_from_order_card(message) -> bool:
+    """Проверяем, идет ли переход из карточки заказа"""
+    if not message or not message.text:
+        return False
+
+    # Карточка заказа содержит специфический текст
+    text = message.text
+    return (
+            "Замовлення #" in text and
+            "━━━━━━━━━━━━━━━━━━━━━━" in text and
+            ("📱" in text or "👤" in text)
+    )
 
 
 def track_navigation_message(user_id: int, message_id: int) -> None:
@@ -100,6 +115,30 @@ async def cleanup_order_files(bot, chat_id: int, user_id: int, order_id: int) ->
     clear_order_file_messages(user_id, order_id)
     debug_print(f"🧹 CLEANUP COMPLETE: Deleted {deleted_count}/{len(message_ids)} messages for order {order_id}")
     debug_print(f"🧹 Cleared tracking for user {user_id}, order {order_id}")
+
+
+async def cleanup_all_user_order_files(bot, chat_id: int, user_id: int) -> None:
+    """Удаляем ВСЕ файловые сообщения пользователя (всех заказов)"""
+    debug_print(f"🧹 UNIVERSAL CLEANUP START: user {user_id}")
+
+    files_to_delete = clear_all_user_files(user_id)
+
+    deleted_count = 0
+    total_count = 0
+
+    for order_id, message_ids in files_to_delete.items():
+        debug_print(f"🧹 Order {order_id}: {len(message_ids)} files to delete")
+
+        for msg_id in message_ids:
+            total_count += 1
+            try:
+                await bot.delete_message(chat_id, msg_id)
+                deleted_count += 1
+                debug_print(f"✅ Deleted file message {msg_id} (order {order_id})")
+            except Exception as e:
+                debug_print(f"❌ Failed to delete file message {msg_id}: {e}", "WARN")
+
+    debug_print(f"🧹 UNIVERSAL CLEANUP COMPLETE: Deleted {deleted_count}/{total_count} file messages")
 
 
 async def update_navigation_message(bot, chat_id: int, user_id: int, text: str,

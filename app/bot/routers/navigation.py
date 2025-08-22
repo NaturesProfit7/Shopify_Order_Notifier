@@ -1,4 +1,4 @@
-# app/bot/routers/navigation.py - ЧИСТЫЕ ПЕРЕХОДЫ ИЗ УВЕДОМЛЕНИЙ
+# app/bot/routers/navigation.py - ПОЛНАЯ ВЕРСИЯ С ОЧИСТКОЙ ФАЙЛОВ
 """Роутер для навигации: главное меню, списки заказов, статистика"""
 
 from datetime import datetime
@@ -14,6 +14,8 @@ from .shared import (
     update_navigation_message,
     track_navigation_message,
     cleanup_all_navigation,
+    cleanup_all_user_order_files,
+    is_coming_from_order_card,
     main_menu_keyboard,
     stats_keyboard,
     orders_list_keyboard,
@@ -61,7 +63,7 @@ async def on_main_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data.regexp(r"^orders:list:(new|pending|all|waiting):offset=\d+$"))
 async def on_orders_list(callback: CallbackQuery):
-    """Список заказов - с поддержкой чистых переходов из уведомлений"""
+    """Список заказов - с поддержкой чистых переходов из уведомлений И очисткой файлов"""
     debug_print(f"Orders list callback: {callback.data} from user {callback.from_user.id}")
 
     parts = callback.data.split(":")
@@ -78,9 +80,21 @@ async def on_orders_list(callback: CallbackQuery):
     PAGE_SIZE = 5
     debug_print(f"Processing orders list: kind={kind}, offset={offset}")
 
-    # КЛЮЧЕВАЯ ЛОГИКА: Проверяем, переходим ли мы из уведомления
+    # НОВАЯ ЛОГИКА: Проверяем, переходим ли мы из карточки заказа
+    coming_from_order = is_coming_from_order_card(callback.message)
     is_from_notification = _is_from_notification(callback)
+
+    debug_print(f"Coming from order card: {coming_from_order}")
     debug_print(f"Is from notification: {is_from_notification}")
+
+    # Если идем из карточки заказа - очищаем ВСЕ файлы пользователя
+    if coming_from_order:
+        debug_print(f"🧹 Cleaning all user files before showing list...")
+        await cleanup_all_user_order_files(
+            callback.bot,
+            callback.message.chat.id,
+            callback.from_user.id
+        )
 
     with get_session() as session:
         query = session.query(Order)

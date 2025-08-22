@@ -73,26 +73,31 @@ class TelegramBot:
 
             logger.info("All routers imported successfully")
 
-            # Регистрируем роутеры в правильном порядке
-            # ВАЖНО: webhook первым для обработки кнопки "Закрити"
-            self.dp.include_router(webhook.router)
-            logger.info("✅ Webhook router registered (priority)")
+            # ИСПРАВЛЕННЫЙ ПОРЯДОК: специфические роутеры ПЕРЕД общими
 
-            # ВАЖНО: management вторым для FSM
+            # 1. Management первым для FSM состояний
             self.dp.include_router(management.router)
-            logger.info("✅ Management router registered (FSM)")
+            logger.info("✅ Management router registered (FSM priority)")
 
-            self.dp.include_router(test_commands.router)
-            logger.info("✅ Test commands router registered")
-
-            self.dp.include_router(commands.router)
-            logger.info("✅ Commands router registered")
-
+            # 2. Orders - обработка конкретных действий с заказами
             self.dp.include_router(orders.router)
             logger.info("✅ Orders router registered")
 
+            # 3. Navigation - общая навигация
             self.dp.include_router(navigation.router)
             logger.info("✅ Navigation router registered")
+
+            # 4. Commands - команды
+            self.dp.include_router(commands.router)
+            logger.info("✅ Commands router registered")
+
+            # 5. Test commands
+            self.dp.include_router(test_commands.router)
+            logger.info("✅ Test commands router registered")
+
+            # 6. Webhook ПОСЛЕДНИМ - только для кнопки "Закрити"
+            self.dp.include_router(webhook.router)
+            logger.info("✅ Webhook router registered (close button only)")
 
             logger.info("All handlers registered successfully!")
 

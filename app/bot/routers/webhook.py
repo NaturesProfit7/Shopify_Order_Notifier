@@ -1,4 +1,4 @@
-# app/bot/routers/webhook.py - НОВЫЙ РОУТЕР для webhook заказов
+# app/bot/routers/webhook.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
 """Роутер для обработки webhook заказов с кнопкой 'Закрити'"""
 
 from aiogram import Router, F
@@ -83,82 +83,6 @@ async def on_webhook_close(callback: CallbackQuery):
     debug_print(f"✅ Webhook order {order_id} completely closed")
 
 
-# Дополнительные обработчики для webhook заказов (используют тот же трекинг файлов)
-
-@router.callback_query(F.data.startswith("order:") & F.data.contains(":resend:"))
-async def on_webhook_resend_file(callback: CallbackQuery):
-    """Повторная отправка PDF/VCF для webhook заказов"""
-
-    # Определяем, это webhook заказ или нет
-    from .shared import is_webhook_message
-
-    if not is_webhook_message(callback.message.message_id):
-        # Это не webhook заказ, пропускаем
-        return
-
-    # Используем обычную логику отправки файлов
-    from .orders import on_resend_file
-    await on_resend_file(callback)
-
-
-@router.callback_query(F.data.startswith("order:") & F.data.contains(":payment"))
-async def on_webhook_payment_info(callback: CallbackQuery):
-    """Реквизиты для webhook заказов"""
-
-    from .shared import is_webhook_message
-
-    if not is_webhook_message(callback.message.message_id):
-        return
-
-    # Используем обычную логику реквизитов
-    from .orders import on_payment_info
-    await on_payment_info(callback)
-
-
-@router.callback_query(F.data.startswith("order:") & F.data.contains(":comment"))
-async def on_webhook_comment(callback: CallbackQuery):
-    """Комментарии для webhook заказов"""
-
-    from .shared import is_webhook_message
-
-    if not is_webhook_message(callback.message.message_id):
-        return
-
-    # Используем обычную логику комментариев
-    from .management import on_comment_button
-    await on_comment_button(callback)
-
-
-@router.callback_query(F.data.startswith("order:") & F.data.contains(":reminder"))
-async def on_webhook_reminder(callback: CallbackQuery):
-    """Напоминания для webhook заказов"""
-
-    from .shared import is_webhook_message
-
-    if not is_webhook_message(callback.message.message_id):
-        return
-
-    # Используем обычную логику напоминаний
-    from .management import on_reminder_button
-    await on_reminder_button(callback)
-
-
-@router.callback_query(F.data.startswith("order:") & F.data.contains((":contacted", ":paid", ":cancel")))
-async def on_webhook_status_change(callback: CallbackQuery):
-    """Изменение статуса для webhook заказов"""
-
-    from .shared import is_webhook_message
-
-    if not is_webhook_message(callback.message.message_id):
-        return
-
-    # Используем обычную логику изменения статусов
-    if ":contacted" in callback.data:
-        from .orders import on_contacted
-        await on_contacted(callback)
-    elif ":paid" in callback.data:
-        from .orders import on_paid
-        await on_paid(callback)
-    elif ":cancel" in callback.data:
-        from .orders import on_cancel
-        await on_cancel(callback)
+# УДАЛЕНЫ ПРОБЛЕМНЫЕ ОБРАБОТЧИКИ
+# Они конфликтовали с основными роутерами orders.py и management.py
+# Теперь webhook роутер обрабатывает ТОЛЬКО кнопку "Закрити"
