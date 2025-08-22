@@ -1,4 +1,4 @@
-# app/bot/routers/orders.py - РАБОЧАЯ ВЕРСИЯ (восстановление)
+# app/bot/routers/orders.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
 """Роутер для работы с заказами: просмотр, изменение статусов, отправка файлов"""
 
 from datetime import datetime
@@ -17,7 +17,9 @@ from .shared import (
     format_phone_compact,
     track_order_file_message,
     cleanup_order_files,
-    order_card_keyboard
+    order_card_keyboard,
+    is_webhook_order_message,  # НОВАЯ ФУНКЦИЯ
+    get_webhook_order_keyboard  # НОВАЯ ФУНКЦИЯ
 )
 
 router = Router()
@@ -85,6 +87,18 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
     return message
 
 
+def get_correct_keyboard(order: Order, callback_message) -> any:
+    """
+    НОВАЯ ФУНКЦИЯ: Выбирает правильную клавиатуру в зависимости от источника заказа
+    """
+    if is_webhook_order_message(callback_message):
+        debug_print(f"Using webhook keyboard for order {order.id}")
+        return get_webhook_order_keyboard(order)
+    else:
+        debug_print(f"Using regular keyboard for order {order.id}")
+        return order_card_keyboard(order)
+
+
 @router.callback_query(F.data.regexp(r"^order:\d+:view$"))
 async def on_order_view(callback: CallbackQuery):
     """Показать карточку заказа"""
@@ -98,7 +112,7 @@ async def on_order_view(callback: CallbackQuery):
             return
 
         message_text = build_order_card_message(order, detailed=True)
-        keyboard = order_card_keyboard(order)
+        keyboard = order_card_keyboard(order)  # Для view всегда обычная клавиатура
 
         try:
             await callback.message.edit_text(
@@ -280,12 +294,15 @@ async def on_payment_info(callback: CallbackQuery):
 
 @router.callback_query(F.data.contains(":contacted"))
 async def on_contacted(callback: CallbackQuery):
-    """Кнопка 'Зв'язались'"""
+    """
+    ИСПРАВЛЕННАЯ ФУНКЦИЯ: Кнопка 'Зв'язались' с выбором правильной клавиатуры
+    """
     if not check_permission(callback.from_user.id):
         await callback.answer("❌ У вас немає прав", show_alert=True)
         return
 
     order_id = int(callback.data.split(":")[1])
+    debug_print(f"🎯 CONTACTED: order {order_id}, checking keyboard type...")
 
     with get_session() as session:
         order = session.get(Order, order_id)
@@ -313,24 +330,29 @@ async def on_contacted(callback: CallbackQuery):
         session.commit()
 
         message_text = build_order_card_message(order, detailed=True)
-        keyboard = order_card_keyboard(order)
+
+        # ИСПРАВЛЕНИЕ: Выбираем правильную клавиатуру в зависимости от источника
+        keyboard = get_correct_keyboard(order, callback.message)
 
         try:
             await callback.message.edit_text(message_text, reply_markup=keyboard)
-        except:
-            pass
+        except Exception as e:
+            debug_print(f"Failed to edit message: {e}", "WARN")
 
         await callback.answer("✅ Статус: Очікує оплату")
 
 
 @router.callback_query(F.data.contains(":paid"))
 async def on_paid(callback: CallbackQuery):
-    """Кнопка 'Оплатили'"""
+    """
+    ИСПРАВЛЕННАЯ ФУНКЦИЯ: Кнопка 'Оплатили' с выбором правильной клавиатуры
+    """
     if not check_permission(callback.from_user.id):
         await callback.answer("❌ У вас немає прав", show_alert=True)
         return
 
     order_id = int(callback.data.split(":")[1])
+    debug_print(f"🎯 PAID: order {order_id}, checking keyboard type...")
 
     with get_session() as session:
         order = session.get(Order, order_id)
@@ -356,24 +378,29 @@ async def on_paid(callback: CallbackQuery):
         session.commit()
 
         message_text = build_order_card_message(order, detailed=True)
-        keyboard = order_card_keyboard(order)
+
+        # ИСПРАВЛЕНИЕ: Выбираем правильную клавиатуру в зависимости от источника
+        keyboard = get_correct_keyboard(order, callback.message)
 
         try:
             await callback.message.edit_text(message_text, reply_markup=keyboard)
-        except:
-            pass
+        except Exception as e:
+            debug_print(f"Failed to edit message: {e}", "WARN")
 
         await callback.answer("✅ Замовлення оплачено")
 
 
 @router.callback_query(F.data.contains(":cancel"))
 async def on_cancel(callback: CallbackQuery):
-    """Кнопка 'Скасування'"""
+    """
+    ИСПРАВЛЕННАЯ ФУНКЦИЯ: Кнопка 'Скасування' с выбором правильной клавиатуры
+    """
     if not check_permission(callback.from_user.id):
         await callback.answer("❌ У вас немає прав", show_alert=True)
         return
 
     order_id = int(callback.data.split(":")[1])
+    debug_print(f"🎯 CANCEL: order {order_id}, checking keyboard type...")
 
     with get_session() as session:
         order = session.get(Order, order_id)
@@ -399,11 +426,13 @@ async def on_cancel(callback: CallbackQuery):
         session.commit()
 
         message_text = build_order_card_message(order, detailed=True)
-        keyboard = order_card_keyboard(order)
+
+        # ИСПРАВЛЕНИЕ: Выбираем правильную клавиатуру в зависимости от источника
+        keyboard = get_correct_keyboard(order, callback.message)
 
         try:
             await callback.message.edit_text(message_text, reply_markup=keyboard)
-        except:
-            pass
+        except Exception as e:
+            debug_print(f"Failed to edit message: {e}", "WARN")
 
         await callback.answer("❌ Замовлення скасовано")

@@ -1,8 +1,8 @@
-# app/bot/routers/shared/utils.py - ПОЛНАЯ ВЕРСИЯ
+# app/bot/routers/shared/utils.py - ПОЛНАЯ ВЕРСИЯ С ИСПРАВЛЕНИЕМ
 """Общие утилиты для работы с ботом"""
 
 import os
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 
 from .state import (
@@ -57,6 +57,74 @@ def is_coming_from_order_card(message) -> bool:
             "━━━━━━━━━━━━━━━━━━━━━━" in text and
             ("📱" in text or "👤" in text)
     )
+
+
+def is_webhook_order_message(message) -> bool:
+    """
+    НОВАЯ ФУНКЦИЯ: Проверяем, является ли сообщение webhook заказом
+    по наличию кнопки 'Закрити' с callback_data 'webhook:*:close'
+    """
+    if not message or not message.reply_markup:
+        return False
+
+    # Проверяем все кнопки в клавиатуре
+    for row in message.reply_markup.inline_keyboard:
+        for button in row:
+            if (button.callback_data and
+                    "webhook:" in button.callback_data and
+                    ":close" in button.callback_data):
+                debug_print(f"Found webhook close button: {button.callback_data}")
+                return True
+
+    debug_print("No webhook close button found - regular order card")
+    return False
+
+
+def get_webhook_order_keyboard(order) -> InlineKeyboardMarkup:
+    """
+    НОВАЯ ФУНКЦИЯ: Клавиатура для webhook заказов - ВСЕГДА с кнопкой 'Закрити'
+    """
+    from app.models import OrderStatus
+
+    buttons = []
+
+    # Кнопки статуса
+    if order.status == OrderStatus.NEW:
+        buttons.append([
+            InlineKeyboardButton(text="✅ Зв'язались", callback_data=f"order:{order.id}:contacted"),
+            InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order.id}:cancel")
+        ])
+    elif order.status == OrderStatus.WAITING_PAYMENT:
+        buttons.append([
+            InlineKeyboardButton(text="💰 Оплатили", callback_data=f"order:{order.id}:paid"),
+            InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order.id}:cancel")
+        ])
+
+    # Файлы
+    buttons.append([
+        InlineKeyboardButton(text="📄 PDF", callback_data=f"order:{order.id}:resend:pdf"),
+        InlineKeyboardButton(text="📱 VCF", callback_data=f"order:{order.id}:resend:vcf")
+    ])
+
+    # Реквизиты
+    buttons.append([
+        InlineKeyboardButton(text="💳 Реквізити", callback_data=f"order:{order.id}:payment")
+    ])
+
+    # Дополнительные действия (для активных заказов)
+    if order.status in [OrderStatus.NEW, OrderStatus.WAITING_PAYMENT]:
+        buttons.append([
+            InlineKeyboardButton(text="💬 Коментар", callback_data=f"order:{order.id}:comment"),
+            InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order.id}:reminder")
+        ])
+
+    # ВСЕГДА кнопка "Закрити" для webhook заказов
+    buttons.append([
+        InlineKeyboardButton(text="❌ Закрити", callback_data=f"webhook:{order.id}:close")
+    ])
+
+    debug_print(f"Created webhook keyboard for order {order.id} with {len(buttons)} rows")
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def track_navigation_message(user_id: int, message_id: int) -> None:
