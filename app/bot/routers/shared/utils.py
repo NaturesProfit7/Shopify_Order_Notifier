@@ -1,4 +1,4 @@
-# app/bot/routers/shared/utils.py
+# app/bot/routers/shared/utils.py - ПОЛНАЯ ВЕРСИЯ
 """Общие утилиты для работы с ботом"""
 
 import os
@@ -42,8 +42,6 @@ def track_navigation_message(user_id: int, message_id: int) -> None:
     """Отслеживаем основное навигационное сообщение пользователя"""
     debug_print(f"Tracking navigation message for user {user_id}: {message_id}")
     set_navigation_message_id(user_id, message_id)
-
-    # НОВОЕ: Также добавляем в общий список навигационных сообщений
     add_navigation_message(user_id, message_id)
     debug_print(f"Navigation message set successfully")
 
@@ -53,7 +51,6 @@ def track_order_file_message(user_id: int, order_id: int, message_id: int) -> No
     debug_print(f"📌 TRACKING: user {user_id}, order {order_id}, message {message_id}")
     add_order_file_message(user_id, order_id, message_id)
 
-    # Проверяем, что сообщение добавилось
     tracked_messages = get_order_file_messages(user_id, order_id)
     debug_print(f"📌 Now tracking {len(tracked_messages)} messages for order {order_id}: {list(tracked_messages)}")
 
@@ -115,25 +112,19 @@ async def update_navigation_message(bot, chat_id: int, user_id: int, text: str,
                 reply_markup=reply_markup
             )
             debug_print(f"Successfully edited message {last_message_id}")
-
-            # ОБНОВЛЕНО: Добавляем в отслеживание при редактировании
             add_navigation_message(user_id, last_message_id)
             return True
         except TelegramBadRequest as e:
-            # Если сообщение не изменилось - это нормально, не создаем новое
             if "message is not modified" in str(e).lower():
                 debug_print(f"Message {last_message_id} content is the same, no update needed")
                 return True
             else:
                 debug_print(f"Failed to edit message {last_message_id}: {e}", "WARN")
-                # Удаляем недействительный ID только при других ошибках
                 remove_navigation_message_id(user_id)
         except Exception as e:
             debug_print(f"Failed to edit message {last_message_id}: {e}", "WARN")
-            # Удаляем недействительный ID
             remove_navigation_message_id(user_id)
 
-    # Отправляем новое сообщение только если действительно нужно
     debug_print(f"Sending new navigation message for user {user_id}")
     try:
         message = await bot.send_message(

@@ -1,4 +1,4 @@
-# app/main.py - ИСПРАВЛЕННАЯ НАВИГАЦИЯ
+# app/main.py - ПОЛНАЯ ВЕРСИЯ С КНОПКОЙ "ЗАКРЫТЬ"
 import json
 import asyncio
 from contextlib import asynccontextmanager
@@ -109,7 +109,7 @@ def health():
 
 @app.post("/webhooks/shopify/orders")
 async def shopify_webhook(request: Request):
-    """Обработчик webhook от Shopify - ИСПРАВЛЕННАЯ НАВИГАЦИЯ"""
+    """Обработчик webhook от Shopify с кнопкой 'Закрыть'"""
     logger.info("=== WEBHOOK RECEIVED ===")
 
     # 1) Получаем и валидируем данные
@@ -201,7 +201,7 @@ async def shopify_webhook(request: Request):
         logger.error("TELEGRAM_TARGET_CHAT_ID not set!")
         raise HTTPException(status_code=500, detail="Telegram chat ID not configured")
 
-    # 6) Отправляем через aiogram бота
+    # 6) Отправляем через aiogram бота с кнопкой "Закрыть"
     bot = get_bot()
     if not bot:
         logger.error("Bot instance not available!")
@@ -222,12 +222,15 @@ async def shopify_webhook(request: Request):
                 logger.error(f"Order {order_id} not found in DB after processing")
                 raise HTTPException(status_code=500, detail="Database error")
 
-            # ИСПРАВЛЕННАЯ НАВИГАЦИЯ: карточка заказа как файл заказа, НЕ навигация
+            # WEBHOOK заказы приходят БЕЗ активного меню у пользователя
             from app.bot.routers.orders import build_order_card_message
-            from app.bot.routers.shared import order_card_keyboard, track_order_file_message
+            from app.bot.routers.shared import order_card_keyboard
 
             main_message = build_order_card_message(order_obj, detailed=True)
-            main_keyboard = order_card_keyboard(order_obj)
+
+            # ВАЖНО: передаем main_admin_id для адаптивной клавиатуры
+            # Поскольку это webhook - у админа нет активного меню, будет кнопка "Закрыть"
+            main_keyboard = order_card_keyboard(order_obj, user_id=main_admin_id)
 
             main_msg = await bot.send_message(
                 chat_id=chat_id_int,
@@ -235,8 +238,8 @@ async def shopify_webhook(request: Request):
                 reply_markup=main_keyboard
             )
 
-            # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: регистрируем как файл заказа, НЕ как навигацию
-            track_order_file_message(main_admin_id, order_id, main_msg.message_id)
+            # НЕ трекаем как файл заказа! Это standalone сообщение из webhook
+            # Оно должно удаляться кнопкой "Закрыть" полностью
 
             # Сохраняем ID основного сообщения для редактирования статусов
             await update_telegram_info(
@@ -245,7 +248,7 @@ async def shopify_webhook(request: Request):
                 message_id=main_msg.message_id
             )
 
-            logger.info(f"Webhook order card sent and tracked as order file")
+            logger.info(f"Webhook order card sent with 'Close' button")
             logger.info(f"Contact identified: {first_name} {last_name}")
             log_event("webhook_processed", order_id=str(order_id), status="success", scenario=scenario,
                       contact_name=f"{first_name} {last_name}")
