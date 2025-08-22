@@ -1,4 +1,4 @@
-# app/state.py
+# app/state.py - С ИСПРАВЛЕННОЙ ЛОГИКОЙ АДРЕСОВ
 """
 Работа с идемпотентностью через PostgreSQL.
 Использует таблицу orders для хранения обработанных заказов.
@@ -78,46 +78,53 @@ async def mark_processed(order_id: str | int, order_data: Optional[dict] = None)
 
 def _update_order_fields(order: Order, data: dict) -> None:
     """
-    Обновляет поля заказа из данных Shopify.
+    Обновляет поля заказа из данных Shopify с НОВОЙ ЛОГИКОЙ АДРЕСОВ.
     """
     # Номер заказа
     order.order_number = str(data.get("order_number") or data.get("id") or "")
 
-    # Данные клиента
-    customer = data.get("customer") or {}
-    shipping = data.get("shipping_address") or {}
-    billing = data.get("billing_address") or {}
+    # НОВАЯ ЛОГИКА: используем исправленную функцию извлечения контактных данных
+    from app.services.address_utils import get_delivery_and_contact_info, get_contact_name, get_contact_phone_e164
 
-    # Извлекаем имя и фамилию (приоритет: customer -> shipping -> billing)
-    order.customer_first_name = (
-                                        customer.get("first_name")
-                                        or shipping.get("first_name")
-                                        or billing.get("first_name")
-                                        or ""
-                                )[:100]  # Ограничиваем длину по схеме БД
+    # Получаем контактную информацию с учетом логики адресов
+    _, contact_info = get_delivery_and_contact_info(data)
 
-    order.customer_last_name = (
-                                       customer.get("last_name")
-                                       or shipping.get("last_name")
-                                       or billing.get("last_name")
-                                       or ""
-                               )[:100]
+    # Извлекаем имя и фамилию контактного лица
+    contact_first_name, contact_last_name = get_contact_name(contact_info)
 
-    # Извлекаем телефон (используем вашу функцию нормализации)
-    from app.services.phone_utils import normalize_ua_phone
+    # Если в контактной информации нет имени - пробуем customer как fallback
+    if not contact_first_name and not contact_last_name:
+        customer = data.get("customer") or {}
+        contact_first_name = (customer.get("first_name") or "").strip()
+        contact_last_name = (customer.get("last_name") or "").strip()
 
-    phone_raw = (
-            customer.get("phone")
-            or data.get("phone")
-            or shipping.get("phone")
-            or billing.get("phone")
-            or ""
-    )
+    # Сохраняем контактные данные в заказ
+    order.customer_first_name = (contact_first_name or "")[:100]
+    order.customer_last_name = (contact_last_name or "")[:100]
 
-    if phone_raw:
-        phone_e164 = normalize_ua_phone(phone_raw)
-        if phone_e164:
-            order.customer_phone_e164 = phone_e164[:32]  # Ограничиваем длину
+    # Извлекаем телефон контактного лица
+    phone_e164 = get_contact_phone_e164(contact_info)
+
+    # Если в контактной информации нет телефона - пробуем другие источники
+    if not phone_e164:
+        from app.services.phone_utils import normalize_ua_phone
+
+        customer = data.get("customer") or {}
+        default_addr = customer.get("default_address") or {}
+
+        # Проверяем различные источники телефона
+        for phone_source in [
+            customer.get("phone"),
+            data.get("phone"),
+            default_addr.get("phone"),
+        ]:
+            if phone_source and str(phone_source).strip():
+                phone_e164 = normalize_ua_phone(str(phone_source).strip())
+                if phone_e164:
+                    break
+
+    if phone_e164:
+        order.customer_phone_e164 = phone_e164[:32]
 
 
 async def get_order_by_id(order_id: str | int) -> Optional[Order]:

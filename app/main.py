@@ -1,4 +1,4 @@
-# app/main.py - С ОТЛАДКОЙ HMAC
+# app/main.py - С ИСПРАВЛЕННЫМ СОХРАНЕНИЕМ КОНТАКТНЫХ ДАННЫХ
 import json
 import asyncio
 from contextlib import asynccontextmanager
@@ -106,15 +106,14 @@ def health():
 
 @app.post("/webhooks/shopify/orders")
 async def shopify_webhook(request: Request):
-    """Обработчик webhook от Shopify - С ОТЛАДКОЙ HMAC"""
+    """Обработчик webhook от Shopify - С ИСПРАВЛЕННЫМ СОХРАНЕНИЕМ КОНТАКТНЫХ ДАННЫХ"""
     logger.info("=== WEBHOOK RECEIVED ===")
 
     # 1) Получаем и валидируем данные
     raw_body = await request.body()
     logger.info(f"Body size: {len(raw_body)} bytes")
 
-    # ИСПРАВЛЕННАЯ HMAC ВАЛИДАЦИЯ с правильным secret
-    # РАБОЧАЯ HMAC ВАЛИДАЦИЯ
+    # HMAC валидация
     hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
     secret = get_shopify_webhook_secret()
 
@@ -126,7 +125,7 @@ async def shopify_webhook(request: Request):
         logger.error("Missing SHOPIFY_WEBHOOK_SECRET")
         raise HTTPException(status_code=500, detail="Missing webhook secret")
 
-    # Shopify использует secret как UTF-8 строку (не hex!)
+    # Shopify использует secret как UTF-8 строку
     secret_bytes = secret.encode('utf-8')
     digest = hmac.new(secret_bytes, raw_body, hashlib.sha256).digest()
     computed_hmac = base64.b64encode(digest).decode('utf-8')
@@ -189,14 +188,7 @@ async def shopify_webhook(request: Request):
         pretty_order_no = str(order_id)
         logger.warning(f"Using minimal order data for order {order_id}")
 
-    # 4) Помечаем как обработанный
-    logger.info(f"Marking order {order_id} as processed...")
-    marked = await mark_processed(order_id, order_full)
-    if not marked:
-        log_event("webhook_race_condition", order_id=str(order_id))
-        return {"status": "duplicate", "order_id": str(order_id)}
-
-    # 5) Извлекаем данные с НОВОЙ ЛОГИКОЙ адресов
+    # 4) Извлекаем данные с НОВОЙ ЛОГИКОЙ адресов
     first_name, last_name, phone_e164 = _extract_customer_data_new_logic(order_full)
 
     # Логируем сценарий адресов
@@ -207,12 +199,45 @@ async def shopify_webhook(request: Request):
     logger.info(f"Address scenario: {scenario}")
     logger.info(f"Contact: {first_name} {last_name}, Phone: {phone_e164}")
 
+    # 5) ИСПРАВЛЕНИЕ: Помечаем как обработанный И обновляем контактные данные
+    logger.info(f"Marking order {order_id} as processed with contact data...")
+
+    # Создаем копию данных заказа с обновленными контактными данными
+    order_data_with_contact = order_full.copy()
+
+    # Обновляем customer секцию с правильными контактными данными
+    if 'customer' not in order_data_with_contact:
+        order_data_with_contact['customer'] = {}
+
+    order_data_with_contact['customer']['first_name'] = first_name
+    order_data_with_contact['customer']['last_name'] = last_name
+
+    marked = await mark_processed(order_id, order_data_with_contact)
+    if not marked:
+        log_event("webhook_race_condition", order_id=str(order_id))
+        return {"status": "duplicate", "order_id": str(order_id)}
+
+    # 6) ДОПОЛНИТЕЛЬНОЕ ИСПРАВЛЕНИЕ: Обновляем поля контактных данных в БД
+    try:
+        with get_session() as session:
+            order_obj = session.get(Order, order_id)
+            if order_obj:
+                # Принудительно обновляем контактные данные
+                order_obj.customer_first_name = first_name[:100] if first_name else ""
+                order_obj.customer_last_name = last_name[:100] if last_name else ""
+                if phone_e164:
+                    order_obj.customer_phone_e164 = phone_e164[:32]
+                session.commit()
+                logger.info(f"✅ Updated contact data in DB: {first_name} {last_name}, {phone_e164}")
+    except Exception as e:
+        logger.error(f"Failed to update contact data in DB: {e}")
+
     chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
     if not chat_id:
         logger.error("TELEGRAM_TARGET_CHAT_ID not set!")
         raise HTTPException(status_code=500, detail="Telegram chat ID not configured")
 
-    # 6) Отправляем ОТДЕЛЬНОЕ сообщение с кнопкой "Закрити"
+    # 7) Отправляем ОТДЕЛЬНОЕ сообщение с кнопкой "Закрити"
     bot = get_bot()
     if not bot:
         logger.error("Bot instance not available!")
@@ -221,7 +246,7 @@ async def shopify_webhook(request: Request):
     try:
         chat_id_int = int(chat_id)
 
-        # Получаем объект заказа из БД
+        # Получаем обновленный объект заказа из БД
         with get_session() as session:
             order_obj = session.get(Order, order_id)
             if not order_obj:
