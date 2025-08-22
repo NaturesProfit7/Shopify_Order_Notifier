@@ -8,7 +8,8 @@ from app.models import Order, OrderStatus
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     """Главное меню"""
     buttons = [
-        [InlineKeyboardButton(text="📋 Необроблені", callback_data="orders:list:pending:offset=0")],
+        [InlineKeyboardButton(text="📋 Необроблені", callback_data="orders:list:new:offset=0")],
+        [InlineKeyboardButton(text="💳 Очікують оплати", callback_data="orders:list:waiting:offset=0")],
         [InlineKeyboardButton(text="📦 Всі замовлення", callback_data="orders:list:all:offset=0")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="stats:show")]
     ]
@@ -105,7 +106,7 @@ def order_card_keyboard(order: Order) -> InlineKeyboardMarkup:
     buttons.append([
         InlineKeyboardButton(
             text="↩️ До списку",
-            callback_data=f"orders:list:pending:offset=0:order={order.id}"
+            callback_data=f"orders:list:new:offset=0:order={order.id}"
         )
     ])
 

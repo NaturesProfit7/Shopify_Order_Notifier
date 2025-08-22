@@ -40,6 +40,7 @@ class Order(Base):
     last_reminder_sent: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     processed_by_user_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     processed_by_username: Mapped[Optional[str]] = mapped_column(String(100))
+    waiting_payment_since: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))  # НОВОЕ
 
     raw_json: Mapped[Optional[dict]] = mapped_column(JSONB)
 

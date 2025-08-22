@@ -11,7 +11,11 @@ from .state import (
     remove_navigation_message_id,
     add_order_file_message,
     get_order_file_messages,
-    clear_order_file_messages
+    clear_order_file_messages,
+    add_navigation_message,
+    get_all_navigation_messages,
+    clear_all_navigation_messages,
+    remove_navigation_message
 )
 
 
@@ -38,6 +42,9 @@ def track_navigation_message(user_id: int, message_id: int) -> None:
     """Отслеживаем основное навигационное сообщение пользователя"""
     debug_print(f"Tracking navigation message for user {user_id}: {message_id}")
     set_navigation_message_id(user_id, message_id)
+
+    # НОВОЕ: Также добавляем в общий список навигационных сообщений
+    add_navigation_message(user_id, message_id)
     debug_print(f"Navigation message set successfully")
 
 
@@ -49,6 +56,26 @@ def track_order_file_message(user_id: int, order_id: int, message_id: int) -> No
     # Проверяем, что сообщение добавилось
     tracked_messages = get_order_file_messages(user_id, order_id)
     debug_print(f"📌 Now tracking {len(tracked_messages)} messages for order {order_id}: {list(tracked_messages)}")
+
+
+async def cleanup_all_navigation(bot, chat_id: int, user_id: int) -> None:
+    """Удаляем ВСЕ навигационные сообщения пользователя"""
+    debug_print(f"🧹 NAVIGATION CLEANUP START: user {user_id}")
+    message_ids = get_all_navigation_messages(user_id)
+    debug_print(f"🧹 Found {len(message_ids)} navigation messages to delete: {list(message_ids)}")
+
+    deleted_count = 0
+    for msg_id in message_ids:
+        try:
+            debug_print(f"🧹 Deleting navigation message {msg_id}...")
+            await bot.delete_message(chat_id, msg_id)
+            deleted_count += 1
+            debug_print(f"✅ Deleted navigation message {msg_id}")
+        except Exception as e:
+            debug_print(f"❌ Failed to delete navigation message {msg_id}: {e}", "WARN")
+
+    clear_all_navigation_messages(user_id)
+    debug_print(f"🧹 NAVIGATION CLEANUP COMPLETE: Deleted {deleted_count}/{len(message_ids)} navigation messages")
 
 
 async def cleanup_order_files(bot, chat_id: int, user_id: int, order_id: int) -> None:
@@ -88,6 +115,9 @@ async def update_navigation_message(bot, chat_id: int, user_id: int, text: str,
                 reply_markup=reply_markup
             )
             debug_print(f"Successfully edited message {last_message_id}")
+
+            # ОБНОВЛЕНО: Добавляем в отслеживание при редактировании
+            add_navigation_message(user_id, last_message_id)
             return True
         except TelegramBadRequest as e:
             # Если сообщение не изменилось - это нормально, не создаем новое

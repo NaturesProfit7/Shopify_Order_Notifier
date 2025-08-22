@@ -1,6 +1,7 @@
-# app/bot/routers/orders.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# app/bot/routers/orders.py - ПОЛНАЯ ОБНОВЛЕННАЯ ВЕРСИЯ
 """Роутер для работы с заказами: просмотр, изменение статусов, отправка файлов"""
 
+from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, BufferedInputFile
 
@@ -271,6 +272,10 @@ async def on_contacted(callback: CallbackQuery):
         order.processed_by_user_id = callback.from_user.id
         order.processed_by_username = callback.from_user.username or callback.from_user.first_name
 
+        # НОВОЕ: Устанавливаем время перехода в WAITING_PAYMENT
+        if old_status != OrderStatus.WAITING_PAYMENT:
+            order.waiting_payment_since = datetime.utcnow()
+
         history = OrderStatusHistory(
             order_id=order_id,
             old_status=old_status.value,
@@ -416,39 +421,43 @@ async def on_paid(callback: CallbackQuery):
         track_order_file_message(callback.from_user.id, order_id, notification_msg.message_id)
 
 
-# ИСПРАВЛЕННЫЙ обработчик "До списку" с передачей order_id
-@router.callback_query(F.data.regexp(r"^orders:list:pending:offset=0:order=\d+$"))
-async def on_back_to_pending_list_with_order(callback: CallbackQuery):
-    """Кнопка 'До списку' - возврат к списку с очисткой файлов КОНКРЕТНОГО заказа"""
-    # Извлекаем order_id из callback_data
+# НОВЫЙ обработчик "До списку" для NEW заказов
+@router.callback_query(F.data.regexp(r"^orders:list:new:offset=0:order=\d+$"))
+async def on_back_to_new_list_with_order(callback: CallbackQuery):
+    """Кнопка 'До списку' - возврат к списку NEW заказов с очисткой файлов"""
     try:
         order_id = int(callback.data.split("order=")[1])
-        debug_print(f"Back to pending list from order {order_id}, user {callback.from_user.id}")
+        debug_print(f"Back to NEW list from order {order_id}, user {callback.from_user.id}")
 
-        # Очищаем ВСЕ файлы этого заказа (PDF, VCF, реквизиты, уведомления)
-        debug_print(f"Cleaning up ALL messages for user {callback.from_user.id}, order {order_id}")
+        # Очищаем ВСЕ файлы этого заказа
         await cleanup_order_files(
             callback.bot,
             callback.message.chat.id,
             callback.from_user.id,
             order_id
         )
-        debug_print(f"Cleanup completed for order {order_id}")
 
     except (ValueError, IndexError) as e:
-        debug_print(f"Failed to extract order_id from callback_data: {e}", "ERROR")
+        debug_print(f"Failed to extract order_id: {e}", "ERROR")
 
-    # Показываем список
-    debug_print("Showing orders list after cleanup")
+    # Показываем список NEW заказов
     from .navigation import on_orders_list
-
-    # Создаем новый объект callback с правильными данными
     from types import SimpleNamespace
+
     new_callback = SimpleNamespace()
-    new_callback.data = "orders:list:pending:offset=0"
+    new_callback.data = "orders:list:new:offset=0"
     new_callback.from_user = callback.from_user
     new_callback.bot = callback.bot
     new_callback.message = callback.message
     new_callback.answer = callback.answer
 
     await on_orders_list(new_callback)
+
+
+# Совместимость: старый обработчик для pending
+@router.callback_query(F.data.regexp(r"^orders:list:pending:offset=0:order=\d+$"))
+async def on_back_to_pending_list_legacy(callback: CallbackQuery):
+    """Legacy: возврат к pending списку"""
+    # Перенаправляем на новый список
+    callback.data = callback.data.replace("pending", "new")
+    await on_back_to_new_list_with_order(callback)
