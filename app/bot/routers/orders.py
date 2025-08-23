@@ -1,9 +1,11 @@
-# app/bot/routers/orders.py - ПОЛНОЕ ИГНОРИРОВАНИЕ НЕАВТОРИЗОВАННЫХ
+# app/bot/routers/orders.py - С АТОМАРНЫМИ ОПЕРАЦИЯМИ И СИНХРОНИЗАЦИЕЙ
 """Роутер для работы с заказами: просмотр, изменение статусов, отправка файлов"""
 
 from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, BufferedInputFile
+from sqlalchemy import and_
+from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.models import Order, OrderStatus, OrderStatusHistory
@@ -19,10 +21,22 @@ from .shared import (
     cleanup_order_files,
     order_card_keyboard,
     is_webhook_order_message,
-    get_webhook_order_keyboard
+    get_webhook_order_keyboard,
+    get_webhook_messages,
+    clear_webhook_messages
 )
 
 router = Router()
+
+
+class OrderLockError(Exception):
+    """Исключение при блокировке заказа"""
+    pass
+
+
+class StatusChangeError(Exception):
+    """Исключение при изменении статуса"""
+    pass
 
 
 def build_order_card_message(order: Order, detailed: bool = False) -> str:
@@ -95,6 +109,152 @@ def get_correct_keyboard(order: Order, callback_message) -> any:
     else:
         debug_print(f"Using regular keyboard for order {order.id}")
         return order_card_keyboard(order)
+
+
+def change_order_status_atomic(
+        session: Session,
+        order_id: int,
+        expected_status: OrderStatus,
+        new_status: OrderStatus,
+        user_id: int,
+        username: str = None
+) -> tuple[bool, Order, str]:
+    """
+    АТОМАРНОЕ изменение статуса заказа с проверкой ожидаемого состояния.
+
+    Returns:
+        (success, order_object, error_message)
+    """
+    debug_print(f"🔄 ATOMIC STATUS CHANGE: order {order_id}, {expected_status.value} -> {new_status.value}")
+
+    try:
+        # Получаем заказ с блокировкой строки (FOR UPDATE)
+        order = session.query(Order).filter(Order.id == order_id).with_for_update().first()
+
+        if not order:
+            return False, None, "Замовлення не знайдено"
+
+        # Проверяем текущий статус
+        if order.status != expected_status:
+            current_status_text = get_status_text(order.status)
+            expected_status_text = get_status_text(expected_status)
+
+            debug_print(f"❌ STATUS CONFLICT: expected {expected_status.value}, got {order.status.value}")
+
+            return False, order, (
+                f"Статус змінився!\n"
+                f"Очікувався: {expected_status_text}\n"
+                f"Поточний: {current_status_text}\n"
+                f"Оновіть карточку заказу"
+            )
+
+        # Изменяем статус
+        old_status = order.status
+        order.status = new_status
+        order.processed_by_user_id = user_id
+        order.processed_by_username = username or str(user_id)
+        order.updated_at = datetime.utcnow()
+
+        # Специальная логика для WAITING_PAYMENT
+        if new_status == OrderStatus.WAITING_PAYMENT and old_status == OrderStatus.NEW:
+            order.waiting_payment_since = datetime.utcnow()
+
+        # Добавляем в историю
+        history = OrderStatusHistory(
+            order_id=order_id,
+            old_status=old_status.value,
+            new_status=new_status.value,
+            changed_by_user_id=user_id,
+            changed_by_username=username or str(user_id)
+        )
+        session.add(history)
+
+        # Коммитим изменения
+        session.commit()
+
+        debug_print(f"✅ STATUS CHANGED SUCCESSFULLY: order {order_id}, {old_status.value} -> {new_status.value}")
+        return True, order, ""
+
+    except Exception as e:
+        debug_print(f"❌ ATOMIC STATUS CHANGE FAILED: {e}", "ERROR")
+        session.rollback()
+        return False, None, f"Помилка зміни статусу: {str(e)}"
+
+
+async def notify_other_managers_about_status_change(
+        bot,
+        order: Order,
+        old_status: OrderStatus,
+        new_status: OrderStatus,
+        changed_by_user_id: int,
+        changed_by_username: str
+):
+    """
+    Уведомляет других менеджеров об изменении статуса заказа.
+    Обновляет их webhook карточки заказа.
+    """
+    debug_print(f"📢 NOTIFYING OTHER MANAGERS: order {order.id}, status change by user {changed_by_user_id}")
+
+    # Получаем все webhook сообщения этого заказа
+    webhook_message_ids = get_webhook_messages(order.id)
+    debug_print(f"📢 Found {len(webhook_message_ids)} webhook messages to update")
+
+    if not webhook_message_ids:
+        debug_print("📢 No webhook messages found - skipping notifications")
+        return
+
+    # Получаем ID чата (предполагаем, что все webhook сообщения в одном чате)
+    import os
+    chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
+    if not chat_id:
+        debug_print("❌ TELEGRAM_TARGET_CHAT_ID not set", "ERROR")
+        return
+
+    try:
+        chat_id_int = int(chat_id)
+
+        # Обновляем каждое webhook сообщение
+        updated_count = 0
+        for message_id in webhook_message_ids:
+            try:
+                # Строим обновленное сообщение
+                updated_message = build_order_card_message(order, detailed=True)
+                updated_keyboard = get_webhook_order_keyboard(order)
+
+                # Обновляем сообщение
+                await bot.edit_message_text(
+                    text=updated_message,
+                    chat_id=chat_id_int,
+                    message_id=message_id,
+                    reply_markup=updated_keyboard
+                )
+
+                updated_count += 1
+                debug_print(f"✅ Updated webhook message {message_id}")
+
+            except Exception as e:
+                debug_print(f"❌ Failed to update webhook message {message_id}: {e}", "WARN")
+
+        # Отправляем уведомление об изменении
+        if updated_count > 0:
+            old_status_text = get_status_text(old_status)
+            new_status_text = get_status_text(new_status)
+            order_no = order.order_number or order.id
+
+            notification = (
+                f"🔄 <b>Статус змінено</b>\n"
+                f"📦 Замовлення #{order_no}\n"
+                f"📈 {old_status_text} → {new_status_text}\n"
+                f"👤 Менеджер: @{changed_by_username}"
+            )
+
+            await bot.send_message(chat_id_int, notification)
+            debug_print(f"✅ Sent status change notification to chat")
+
+        debug_print(f"📢 NOTIFICATION COMPLETE: Updated {updated_count}/{len(webhook_message_ids)} messages")
+
+    except Exception as e:
+        debug_print(f"❌ NOTIFICATION FAILED: {e}", "ERROR")
 
 
 @router.callback_query(F.data.regexp(r"^order:\d+:view$"))
@@ -301,102 +461,160 @@ async def on_payment_info(callback: CallbackQuery):
 
 @router.callback_query(F.data.contains(":contacted"))
 async def on_contacted(callback: CallbackQuery):
-    """Кнопка 'Зв'язались' - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    """Кнопка 'Зв'язались' - С АТОМАРНЫМИ ОПЕРАЦИЯМИ"""
     if not check_permission(callback.from_user.id):
         return
 
     order_id = int(callback.data.split(":")[1])
-    debug_print(f"🎯 CONTACTED: order {order_id}")
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.first_name or str(user_id)
+
+    debug_print(f"🎯 CONTACTED: order {order_id} by user {user_id}")
 
     with get_session() as session:
-        order = session.get(Order, order_id)
-        if not order:
-            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
-            return
-
-        if order.status != OrderStatus.NEW:
-            await callback.answer("⚠️ Статус вже змінено", show_alert=True)
-            return
-
-        old_status = order.status
-        order.status = OrderStatus.WAITING_PAYMENT
-        order.processed_by_user_id = callback.from_user.id
-        order.processed_by_username = callback.from_user.username or callback.from_user.first_name
-
-        history = OrderStatusHistory(
+        # АТОМАРНОЕ изменение статуса
+        success, order, error_msg = change_order_status_atomic(
+            session=session,
             order_id=order_id,
-            old_status=old_status.value,
-            new_status=OrderStatus.WAITING_PAYMENT.value,
-            changed_by_user_id=callback.from_user.id,
-            changed_by_username=callback.from_user.username or callback.from_user.first_name
+            expected_status=OrderStatus.NEW,
+            new_status=OrderStatus.WAITING_PAYMENT,
+            user_id=user_id,
+            username=username
         )
-        session.add(history)
-        session.commit()
 
-        message_text = build_order_card_message(order, detailed=True)
-        keyboard = get_correct_keyboard(order, callback.message)
+        if not success:
+            if order is None:
+                await callback.answer("❌ Замовлення не знайдено", show_alert=True)
+            else:
+                # Показываем детальную ошибку конфликта статуса
+                await callback.answer(f"⚠️ {error_msg}", show_alert=True)
 
+                # Обновляем карточку актуальными данными
+                try:
+                    session.refresh(order)  # Перезагружаем объект из БД
+                    message_text = build_order_card_message(order, detailed=True)
+                    keyboard = get_correct_keyboard(order, callback.message)
+
+                    await callback.message.edit_text(message_text, reply_markup=keyboard)
+                    debug_print(f"♻️ Updated card with current status: {order.status.value}")
+                except Exception as e:
+                    debug_print(f"Failed to refresh card after conflict: {e}", "WARN")
+
+            return
+
+        # Успешно изменили статус - обновляем карточку
         try:
-            await callback.message.edit_text(message_text, reply_markup=keyboard)
-        except Exception as e:
-            debug_print(f"Failed to edit message: {e}", "WARN")
+            message_text = build_order_card_message(order, detailed=True)
+            keyboard = get_correct_keyboard(order, callback.message)
 
-        await callback.answer("✅ Статус: Очікує оплату")
+            await callback.message.edit_text(message_text, reply_markup=keyboard)
+            await callback.answer("✅ Статус: Очікує оплату")
+
+            debug_print(f"✅ CONTACTED SUCCESS: order {order_id}")
+
+        except Exception as e:
+            debug_print(f"Failed to edit message after status change: {e}", "WARN")
+            await callback.answer("✅ Статус змінено (помилка оновлення)")
+
+    # Уведомляем других менеджеров об изменении (асинхронно)
+    if success:
+        try:
+            await notify_other_managers_about_status_change(
+                callback.bot,
+                order,
+                OrderStatus.NEW,
+                OrderStatus.WAITING_PAYMENT,
+                user_id,
+                username
+            )
+        except Exception as e:
+            debug_print(f"Failed to notify other managers: {e}", "WARN")
 
 
 @router.callback_query(F.data.contains(":paid"))
 async def on_paid(callback: CallbackQuery):
-    """Кнопка 'Оплатили' - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    """Кнопка 'Оплатили' - С АТОМАРНЫМИ ОПЕРАЦИЯМИ"""
     if not check_permission(callback.from_user.id):
         return
 
     order_id = int(callback.data.split(":")[1])
-    debug_print(f"🎯 PAID: order {order_id}")
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.first_name or str(user_id)
+
+    debug_print(f"🎯 PAID: order {order_id} by user {user_id}")
 
     with get_session() as session:
-        order = session.get(Order, order_id)
-        if not order:
-            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
-            return
-
-        if order.status != OrderStatus.WAITING_PAYMENT:
-            await callback.answer("⚠️ Неможливо змінити статус", show_alert=True)
-            return
-
-        old_status = order.status
-        order.status = OrderStatus.PAID
-
-        history = OrderStatusHistory(
+        # АТОМАРНОЕ изменение статуса
+        success, order, error_msg = change_order_status_atomic(
+            session=session,
             order_id=order_id,
-            old_status=old_status.value,
-            new_status=OrderStatus.PAID.value,
-            changed_by_user_id=callback.from_user.id,
-            changed_by_username=callback.from_user.username or callback.from_user.first_name
+            expected_status=OrderStatus.WAITING_PAYMENT,
+            new_status=OrderStatus.PAID,
+            user_id=user_id,
+            username=username
         )
-        session.add(history)
-        session.commit()
 
-        message_text = build_order_card_message(order, detailed=True)
-        keyboard = get_correct_keyboard(order, callback.message)
+        if not success:
+            if order is None:
+                await callback.answer("❌ Замовлення не знайдено", show_alert=True)
+            else:
+                await callback.answer(f"⚠️ {error_msg}", show_alert=True)
 
+                # Обновляем карточку актуальными данными
+                try:
+                    session.refresh(order)
+                    message_text = build_order_card_message(order, detailed=True)
+                    keyboard = get_correct_keyboard(order, callback.message)
+
+                    await callback.message.edit_text(message_text, reply_markup=keyboard)
+                except Exception as e:
+                    debug_print(f"Failed to refresh card after conflict: {e}", "WARN")
+
+            return
+
+        # Успешно изменили статус
         try:
-            await callback.message.edit_text(message_text, reply_markup=keyboard)
-        except Exception as e:
-            debug_print(f"Failed to edit message: {e}", "WARN")
+            message_text = build_order_card_message(order, detailed=True)
+            keyboard = get_correct_keyboard(order, callback.message)
 
-        await callback.answer("✅ Замовлення оплачено")
+            await callback.message.edit_text(message_text, reply_markup=keyboard)
+            await callback.answer("✅ Замовлення оплачено")
+
+            debug_print(f"✅ PAID SUCCESS: order {order_id}")
+
+        except Exception as e:
+            debug_print(f"Failed to edit message after status change: {e}", "WARN")
+            await callback.answer("✅ Статус змінено (помилка оновлення)")
+
+    # Уведомляем других менеджеров
+    if success:
+        try:
+            await notify_other_managers_about_status_change(
+                callback.bot,
+                order,
+                OrderStatus.WAITING_PAYMENT,
+                OrderStatus.PAID,
+                user_id,
+                username
+            )
+        except Exception as e:
+            debug_print(f"Failed to notify other managers: {e}", "WARN")
 
 
 @router.callback_query(F.data.contains(":cancel"))
 async def on_cancel(callback: CallbackQuery):
-    """Кнопка 'Скасування' - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    """Кнопка 'Скасування' - С АТОМАРНЫМИ ОПЕРАЦИЯМИ"""
     if not check_permission(callback.from_user.id):
         return
 
     order_id = int(callback.data.split(":")[1])
-    debug_print(f"🎯 CANCEL: order {order_id}")
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.first_name or str(user_id)
+
+    debug_print(f"🎯 CANCEL: order {order_id} by user {user_id}")
 
     with get_session() as session:
+        # Сначала получаем текущий заказ для определения ожидаемого статуса
         order = session.get(Order, order_id)
         if not order:
             await callback.answer("❌ Замовлення не знайдено", show_alert=True)
@@ -406,25 +624,61 @@ async def on_cancel(callback: CallbackQuery):
             await callback.answer("⚠️ Замовлення вже скасовано", show_alert=True)
             return
 
+        # Запоминаем старый статус для уведомлений
         old_status = order.status
-        order.status = OrderStatus.CANCELLED
 
-        history = OrderStatusHistory(
+        # АТОМАРНОЕ изменение статуса (отмена возможна из любого статуса кроме CANCELLED)
+        success, updated_order, error_msg = change_order_status_atomic(
+            session=session,
             order_id=order_id,
-            old_status=old_status.value,
-            new_status=OrderStatus.CANCELLED.value,
-            changed_by_user_id=callback.from_user.id,
-            changed_by_username=callback.from_user.username or callback.from_user.first_name
+            expected_status=old_status,  # Ожидаемый = текущий
+            new_status=OrderStatus.CANCELLED,
+            user_id=user_id,
+            username=username
         )
-        session.add(history)
-        session.commit()
 
-        message_text = build_order_card_message(order, detailed=True)
-        keyboard = get_correct_keyboard(order, callback.message)
+        if not success:
+            if updated_order is None:
+                await callback.answer("❌ Замовлення не знайдено", show_alert=True)
+            else:
+                await callback.answer(f"⚠️ {error_msg}", show_alert=True)
 
+                # Обновляем карточку актуальными данными
+                try:
+                    session.refresh(updated_order)
+                    message_text = build_order_card_message(updated_order, detailed=True)
+                    keyboard = get_correct_keyboard(updated_order, callback.message)
+
+                    await callback.message.edit_text(message_text, reply_markup=keyboard)
+                except Exception as e:
+                    debug_print(f"Failed to refresh card after conflict: {e}", "WARN")
+
+            return
+
+        # Успешно отменили заказ
         try:
-            await callback.message.edit_text(message_text, reply_markup=keyboard)
-        except Exception as e:
-            debug_print(f"Failed to edit message: {e}", "WARN")
+            message_text = build_order_card_message(updated_order, detailed=True)
+            keyboard = get_correct_keyboard(updated_order, callback.message)
 
-        await callback.answer("❌ Замовлення скасовано")
+            await callback.message.edit_text(message_text, reply_markup=keyboard)
+            await callback.answer("❌ Замовлення скасовано")
+
+            debug_print(f"✅ CANCEL SUCCESS: order {order_id}")
+
+        except Exception as e:
+            debug_print(f"Failed to edit message after status change: {e}", "WARN")
+            await callback.answer("✅ Статус змінено (помилка оновлення)")
+
+    # Уведомляем других менеджеров
+    if success:
+        try:
+            await notify_other_managers_about_status_change(
+                callback.bot,
+                updated_order,
+                old_status,
+                OrderStatus.CANCELLED,
+                user_id,
+                username
+            )
+        except Exception as e:
+            debug_print(f"Failed to notify other managers: {e}", "WARN")
