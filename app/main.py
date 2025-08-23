@@ -1,4 +1,4 @@
-# app/main.py - С ИСПРАВЛЕННЫМ СОХРАНЕНИЕМ КОНТАКТНЫХ ДАННЫХ
+# app/main.py - ИСПРАВЛЕННЫЙ С ПРАВИЛЬНЫМ ОБЪЕКТОМ APP
 import json
 import asyncio
 from contextlib import asynccontextmanager
@@ -11,7 +11,6 @@ from app.services.phone_utils import normalize_ua_phone
 from app.services.address_utils import get_delivery_and_contact_info, get_contact_name, get_contact_phone_e164, \
     addresses_are_same
 
-from app.bot.main import start_bot, stop_bot, get_bot
 from app.db import get_session
 from app.models import Order, OrderStatus
 
@@ -33,21 +32,44 @@ def log_event(event: str, **kwargs):
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app_instance: FastAPI):
     """Управление жизненным циклом приложения"""
     logger.info("Starting application lifespan...")
-    # Запускаем бота при старте
-    bot_task = asyncio.create_task(start_bot())
-    # Даем боту время инициализироваться
-    await asyncio.sleep(2)
-    logger.info("Bot initialization complete")
-    yield
-    # Останавливаем бота при выключении
-    logger.info("Stopping application...")
-    await stop_bot()
+
+    try:
+        # Импортируем и запускаем бота при старте
+        from app.bot.main import start_bot
+        logger.info("Starting Telegram bot...")
+        bot_task = asyncio.create_task(start_bot())
+
+        # Даем боту время инициализироваться
+        await asyncio.sleep(2)
+        logger.info("Bot initialization complete")
+
+        yield
+
+    except Exception as e:
+        logger.error(f"Error during bot startup: {e}", exc_info=True)
+        yield  # Продолжаем работу даже если бот не запустился
+
+    finally:
+        # Останавливаем бота при выключении
+        logger.info("Stopping application...")
+        try:
+            from app.bot.main import stop_bot
+            await stop_bot()
+            logger.info("Bot stopped successfully")
+        except Exception as e:
+            logger.error(f"Error stopping bot: {e}", exc_info=True)
 
 
-app = FastAPI(lifespan=lifespan)
+# СОЗДАЕМ ОБЪЕКТ ПРИЛОЖЕНИЯ
+app = FastAPI(
+    title="Shopify Order Notifier",
+    description="Автоматическая обработка заказов Shopify и уведомления в Telegram",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 
 def _extract_customer_data_new_logic(order: dict) -> tuple[str, str, str]:
@@ -101,7 +123,21 @@ def _display_order_number(order: dict, fallback_id: int | str) -> str:
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    """Проверка состояния сервиса"""
+    return {"status": "ok", "timestamp": int(time.time())}
+
+
+@app.get("/")
+def root():
+    """Корневой путь"""
+    return {
+        "service": "Shopify Order Notifier",
+        "status": "running",
+        "endpoints": {
+            "health": "/health",
+            "webhook": "/webhooks/shopify/orders"
+        }
+    }
 
 
 @app.post("/webhooks/shopify/orders")
@@ -238,12 +274,14 @@ async def shopify_webhook(request: Request):
         raise HTTPException(status_code=500, detail="Telegram chat ID not configured")
 
     # 7) Отправляем ОТДЕЛЬНОЕ сообщение с кнопкой "Закрити"
-    bot = get_bot()
-    if not bot:
-        logger.error("Bot instance not available!")
-        raise HTTPException(status_code=500, detail="Bot not initialized")
-
     try:
+        from app.bot.main import get_bot
+
+        bot = get_bot()
+        if not bot:
+            logger.error("Bot instance not available!")
+            raise HTTPException(status_code=500, detail="Bot not initialized")
+
         chat_id_int = int(chat_id)
 
         # Получаем обновленный объект заказа из БД
@@ -254,10 +292,42 @@ async def shopify_webhook(request: Request):
                 raise HTTPException(status_code=500, detail="Database error")
 
             # WEBHOOK заказ: отправляется ОТДЕЛЬНО (не как navigation!)
-            from app.bot.routers.orders import build_order_card_message
+            from app.bot.services.message_builder import get_status_emoji
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-            main_message = build_order_card_message(order_obj, detailed=True)
+            # Строим сообщение
+            order_no = order_obj.order_number or order_obj.id
+            status_emoji = get_status_emoji(order_obj.status)
+            customer_name = f"{order_obj.customer_first_name or ''} {order_obj.customer_last_name or ''}".strip() or "Без імені"
+            phone = order_obj.customer_phone_e164 if order_obj.customer_phone_e164 else "Не вказано"
+
+            main_message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} Новий
+━━━━━━━━━━━━━━━━━━━━━━
+👤 {customer_name}
+📱 {phone}"""
+
+            # Добавляем краткую информацию о товарах
+            if order_obj.raw_json and order_obj.raw_json.get("line_items"):
+                items = order_obj.raw_json["line_items"]
+                if items:
+                    items_text = []
+                    for item in items[:3]:
+                        title = item.get("title", "")
+                        qty = item.get("quantity", 0)
+                        items_text.append(f"• {title} x{qty}")
+
+                    if items_text:
+                        main_message += f"\n🛍 <b>Товари:</b> {', '.join(items_text)}"
+                        if len(items) > 3:
+                            main_message += f" <i>+ще {len(items) - 3}</i>"
+
+                # Сумма
+                total = order_obj.raw_json.get("total_price", "")
+                currency = order_obj.raw_json.get("currency", "UAH")
+                if total:
+                    main_message += f"\n💰 <b>Сума:</b> {total} {currency}"
+
+            main_message += "\n━━━━━━━━━━━━━━━━━━━━━━"
 
             # ПРОСТАЯ клавиатура с кнопкой "Закрити"
             webhook_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -319,3 +389,36 @@ async def shopify_webhook(request: Request):
     logger.info(f"=== WEBHOOK PROCESSED SUCCESSFULLY for order {order_id} (scenario: {scenario}) ===")
     return {"status": "ok", "order_id": str(order_id), "scenario": scenario,
             "contact_name": f"{first_name} {last_name}"}
+
+
+# Добавляем дополнительные эндпойнты для отладки
+@app.get("/debug/orders")
+async def debug_orders():
+    """Отладочный эндпойнт для просмотра заказов"""
+    try:
+        with get_session() as session:
+            orders = session.query(Order).order_by(Order.created_at.desc()).limit(10).all()
+
+            result = []
+            for order in orders:
+                result.append({
+                    "id": order.id,
+                    "order_number": order.order_number,
+                    "status": order.status.value,
+                    "customer_name": f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip(),
+                    "customer_phone": order.customer_phone_e164,
+                    "created_at": order.created_at.isoformat() if order.created_at else None,
+                    "is_processed": order.is_processed
+                })
+
+            return {"orders": result, "total": len(result)}
+
+    except Exception as e:
+        logger.error(f"Error in debug endpoint: {e}")
+        return {"error": str(e)}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8003, reload=True)

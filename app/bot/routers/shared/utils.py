@@ -1,9 +1,13 @@
-# app/bot/routers/shared/utils.py - ПОЛНОЕ ИГНОРИРОВАНИЕ НЕАВТОРИЗОВАННЫХ
-"""Общие утилиты для работы с ботом"""
+# app/bot/routers/shared/utils.py - ИСПРАВЛЕННЫЙ ФАЙЛ
+"""Общие утилиты для работы с ботом - БЕЗ ЦИКЛИЧЕСКИХ ИМПОРТОВ"""
 
 import os
+from typing import TYPE_CHECKING
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
+
+if TYPE_CHECKING:
+    from app.models import Order
 
 from .state import (
     get_navigation_message_id,
@@ -108,9 +112,10 @@ def is_webhook_order_message(message) -> bool:
     return False
 
 
-def get_webhook_order_keyboard(order) -> InlineKeyboardMarkup:
+def get_webhook_order_keyboard(order: 'Order') -> InlineKeyboardMarkup:
     """
     НОВАЯ ФУНКЦИЯ: Клавиатура для webhook заказов - ВСЕГДА с кнопкой 'Закрити'
+    ИМПОРТИРУЕМ OrderStatus ЛОКАЛЬНО чтобы избежать циклических импортов
     """
     from app.models import OrderStatus
 

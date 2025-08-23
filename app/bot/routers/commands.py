@@ -1,4 +1,4 @@
-# app/bot/routers/commands.py - ПОЛНОЕ ИГНОРИРОВАНИЕ НЕАВТОРИЗОВАННЫХ
+# app/bot/routers/commands.py - ИСПРАВЛЕННЫЕ КОМАНДЫ БЕЗ ЦИКЛИЧЕСКИХ ИМПОРТОВ
 from aiogram import Router
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
@@ -12,12 +12,43 @@ from .shared import (
     check_permission,
     track_navigation_message,
     update_navigation_message,
-    main_menu_keyboard,
-    stats_keyboard,
-    back_to_menu_keyboard
 )
 
 router = Router()
+
+
+def main_menu_keyboard():
+    """Главное меню - ЛОКАЛЬНАЯ ВЕРСИЯ БЕЗ ИМПОРТА"""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    buttons = [
+        [InlineKeyboardButton(text="📋 Необроблені", callback_data="orders:list:new:offset=0")],
+        [InlineKeyboardButton(text="💳 Очікують оплати", callback_data="orders:list:waiting:offset=0")],
+        [InlineKeyboardButton(text="📦 Всі замовлення", callback_data="orders:list:all:offset=0")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="stats:show")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def stats_keyboard():
+    """Клавиатура статистики - ЛОКАЛЬНАЯ ВЕРСИЯ"""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    buttons = [[
+        InlineKeyboardButton(text="🔄 Оновити", callback_data="stats:refresh"),
+        InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main")
+    ]]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def back_to_menu_keyboard():
+    """Кнопка возврата в главное меню - ЛОКАЛЬНАЯ ВЕРСИЯ"""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    buttons = [[
+        InlineKeyboardButton(text="🏠 Головне меню", callback_data="menu:main")
+    ]]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 async def send_main_menu(bot, chat_id: int, user_id: int) -> None:
@@ -186,22 +217,34 @@ async def on_pending_command(msg: Message):
         )
 
         if success:
-            # Импортируем обработчик из navigation
-            from .navigation import on_orders_list
+            # Импортируем обработчик из navigation БЕЗ ЦИКЛИЧЕСКИХ ИМПОРТОВ
+            try:
+                from .navigation import on_orders_list
 
-            # Создаем фиктивный callback
-            class FakeCallback:
-                def __init__(self):
-                    self.data = "orders:list:pending:offset=0"
-                    self.from_user = msg.from_user
-                    self.bot = msg.bot
-                    self.message = type('obj', (object,), {'chat': msg.chat})()
+                # Создаем фиктивный callback
+                class FakeCallback:
+                    def __init__(self):
+                        self.data = "orders:list:pending:offset=0"
+                        self.from_user = msg.from_user
+                        self.bot = msg.bot
+                        self.message = type('obj', (object,), {'chat': msg.chat})()
 
-                async def answer(self, text=None, show_alert=False):
-                    pass
+                    async def answer(self, text=None, show_alert=False):
+                        pass
 
-            fake_callback = FakeCallback()
-            await on_orders_list(fake_callback)
+                fake_callback = FakeCallback()
+                await on_orders_list(fake_callback)
+
+            except ImportError as e:
+                debug_print(f"Could not import navigation router: {e}", "WARN")
+                # Fallback - просто показываем меню
+                await update_navigation_message(
+                    msg.bot,
+                    msg.chat.id,
+                    msg.from_user.id,
+                    "🏠 <b>Головне меню</b>\n\nВикористовуйте кнопки для навігації:",
+                    main_menu_keyboard()
+                )
 
     except Exception as e:
         debug_print(f"Error switching to pending: {e}", "ERROR")
