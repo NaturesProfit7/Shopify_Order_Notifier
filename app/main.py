@@ -1,424 +1,457 @@
-# app/main.py - ИСПРАВЛЕННЫЙ С ПРАВИЛЬНЫМ ОБЪЕКТОМ APP
-import json
+# app/bot/main.py - С ИСПРАВЛЕННЫМ TIMEZONE
 import asyncio
-from contextlib import asynccontextmanager
-from app.state import is_processed, mark_processed, update_telegram_info
-from fastapi import FastAPI, Request, HTTPException
-import hmac, hashlib, base64
-from app.config import get_shopify_webhook_secret
-
-from app.services.phone_utils import normalize_ua_phone
-from app.services.address_utils import get_delivery_and_contact_info, get_contact_name, get_contact_phone_e164, \
-    addresses_are_same
+import os
+from datetime import datetime, timedelta
+from typing import Optional
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
+import pytz
 
 from app.db import get_session
 from app.models import Order, OrderStatus
 
-import logging, json as _json, time
-import os
+import logging
 
-# Настройка детального логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("app.main")
+logger = logging.getLogger(__name__)
 
 
-def log_event(event: str, **kwargs):
-    payload = {"event": event, "timestamp": int(time.time())}
-    payload.update(kwargs)
-    logger.info(_json.dumps(payload, ensure_ascii=False))
+def get_timezone():
+    """Получить правильную временную зону"""
+    # Пробуем различные варианты названий для Киева
+    timezone_variants = [
+        "Europe/Kyiv",  # Новое официальное название
+        "Europe/Kiev",  # Старое название
+        "UTC"  # Fallback на UTC
+    ]
 
-
-@asynccontextmanager
-async def lifespan(app_instance: FastAPI):
-    """Управление жизненным циклом приложения"""
-    logger.info("Starting application lifespan...")
-
-    try:
-        # Импортируем и запускаем бота при старте
-        from app.bot.main import start_bot
-        logger.info("Starting Telegram bot...")
-        bot_task = asyncio.create_task(start_bot())
-
-        # Даем боту время инициализироваться
-        await asyncio.sleep(2)
-        logger.info("Bot initialization complete")
-
-        yield
-
-    except Exception as e:
-        logger.error(f"Error during bot startup: {e}", exc_info=True)
-        yield  # Продолжаем работу даже если бот не запустился
-
-    finally:
-        # Останавливаем бота при выключении
-        logger.info("Stopping application...")
+    for tz_name in timezone_variants:
         try:
-            from app.bot.main import stop_bot
-            await stop_bot()
-            logger.info("Bot stopped successfully")
+            return pytz.timezone(tz_name)
+        except pytz.UnknownTimeZoneError:
+            continue
+
+    # Если ничего не найдено - используем UTC
+    logger.warning("Could not find Kyiv/Kiev timezone, using UTC")
+    return pytz.UTC
+
+
+class TelegramBot:
+    """Singleton класс для управления Telegram ботом"""
+    _instance: Optional['TelegramBot'] = None
+    _lock = asyncio.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, 'initialized'):
+            return
+
+        token = os.getenv("TELEGRAM_BOT_TOKEN")
+        if not token:
+            raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
+
+        self.bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+
+        # ИСПОЛЬЗУЕМ MemoryStorage для FSM
+        storage = MemoryStorage()
+        self.dp = Dispatcher(storage=storage)
+
+        # ИСПРАВЛЕННЫЙ scheduler с правильным timezone
+        self.timezone = get_timezone()
+        self.scheduler = AsyncIOScheduler(timezone=self.timezone)
+        self.chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
+
+        # Polling task
+        self.polling_task: Optional[asyncio.Task] = None
+
+        # Список разрешенных менеджеров
+        allowed_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")
+        self.allowed_user_ids = [int(uid.strip()) for uid in allowed_ids.split(",") if uid.strip()]
+
+        # Регистрируем хендлеры
+        self._register_handlers()
+
+        # Настраиваем планировщик
+        self._setup_scheduler()
+
+        self.initialized = True
+        logger.info(f"TelegramBot initialized with timezone: {self.timezone}")
+
+    def _register_handlers(self):
+        """Регистрация всех хендлеров"""
+        try:
+            logger.info("Starting handler registration...")
+
+            # Импортируем роутеры
+            from app.bot.routers import commands, navigation, orders, management, test_commands, webhook
+
+            logger.info("All routers imported successfully")
+
+            # ИСПРАВЛЕННЫЙ ПОРЯДОК: специфические роутеры ПЕРЕД общими
+
+            # 1. Management первым для FSM состояний
+            self.dp.include_router(management.router)
+            logger.info("✅ Management router registered (FSM priority)")
+
+            # 2. Orders - обработка конкретных действий с заказами
+            self.dp.include_router(orders.router)
+            logger.info("✅ Orders router registered")
+
+            # 3. Navigation - общая навигация
+            self.dp.include_router(navigation.router)
+            logger.info("✅ Navigation router registered")
+
+            # 4. Commands - команды
+            self.dp.include_router(commands.router)
+            logger.info("✅ Commands router registered")
+
+            # 5. Test commands
+            self.dp.include_router(test_commands.router)
+            logger.info("✅ Test commands router registered")
+
+            # 6. Webhook ПОСЛЕДНИМ - только для кнопки "Закрити"
+            self.dp.include_router(webhook.router)
+            logger.info("✅ Webhook router registered (close button only)")
+
+            logger.info("All handlers registered successfully!")
+
         except Exception as e:
-            logger.error(f"Error stopping bot: {e}", exc_info=True)
+            logger.error(f"Error registering handlers: {e}", exc_info=True)
+            raise
 
+    def _setup_scheduler(self):
+        """Настройка планировщика задач"""
+        # 1. Проверка НОВЫХ заказов КАЖДЫЙ ЧАС (10:00-22:00)
+        self.scheduler.add_job(
+            self._check_new_orders,
+            trigger=IntervalTrigger(hours=1),
+            id="check_new_orders",
+            replace_existing=True
+        )
 
-# СОЗДАЕМ ОБЪЕКТ ПРИЛОЖЕНИЯ
-app = FastAPI(
-    title="Shopify Order Notifier",
-    description="Автоматическая обработка заказов Shopify и уведомления в Telegram",
-    version="1.0.0",
-    lifespan=lifespan
-)
+        # 2. Проверка индивидуальных напоминаний каждые 5 минут
+        self.scheduler.add_job(
+            self._check_reminders,
+            trigger=IntervalTrigger(minutes=5),
+            id="check_reminders",
+            replace_existing=True
+        )
 
+        # 3. Ежедневное напоминание об оплате в 10:30
+        self.scheduler.add_job(
+            self._check_payment_reminders,
+            trigger=CronTrigger(hour=10, minute=30, timezone=self.timezone),
+            id="payment_reminders",
+            replace_existing=True
+        )
 
-def _extract_customer_data_new_logic(order: dict) -> tuple[str, str, str]:
-    """
-    НОВАЯ ЛОГИКА: извлекает данные контактного лица с учетом разных адресов.
-    Возвращает (first_name, last_name, phone_e164).
-    """
-    # Получаем контактную информацию
-    _, contact_info = get_delivery_and_contact_info(order)
+        logger.info(f"Scheduler configured with timezone: {self.timezone}")
 
-    # Извлекаем имя контактного лица
-    first_name, last_name = get_contact_name(contact_info)
+    def _is_working_hours(self) -> bool:
+        """Проверка рабочего времени 10:00-22:00"""
+        now_tz = datetime.now(self.timezone)
+        hour = now_tz.hour
 
-    # Если нет имени в контактной информации - пробуем customer
-    if not first_name and not last_name:
-        cust = order.get("customer", {})
-        first_name = (cust.get("first_name") or "").strip()
-        last_name = (cust.get("last_name") or "").strip()
+        return 10 <= hour < 22
 
-    # Извлекаем телефон контактного лица
-    phone_e164 = get_contact_phone_e164(contact_info)
+    async def _check_new_orders(self):
+        """Проверка заказов в статусе NEW - каждый час (10:00-22:00)"""
+        try:
+            # Проверяем рабочее время
+            if not self._is_working_hours():
+                logger.info("Skipping new orders check - outside working hours")
+                return
 
-    # Если нет телефона в контактной информации - пробуем другие источники
-    if not phone_e164:
-        cust = order.get("customer", {})
-        default_addr = cust.get("default_address", {})
+            with get_session() as session:
+                new_orders = session.query(Order).filter(
+                    Order.status == OrderStatus.NEW
+                ).order_by(Order.created_at.desc()).all()
 
-        for phone_source in [
-            cust.get("phone"),
-            order.get("phone"),
-            default_addr.get("phone"),
-        ]:
-            if phone_source and str(phone_source).strip():
-                phone_e164 = normalize_ua_phone(str(phone_source).strip())
-                if phone_e164:
-                    break
+                if not new_orders or not self.chat_id:
+                    logger.info("No new orders to remind about")
+                    return
 
-    return first_name, last_name, phone_e164 or ""
+                message = f"🆕 <b>Необроблені замовлення ({len(new_orders)} шт):</b>\n\n"
 
+                for order in new_orders[:15]:
+                    order_no = order.order_number or order.id
+                    customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
 
-def _display_order_number(order: dict, fallback_id: int | str) -> str:
-    """Человеко-читаемый номер заказа"""
-    num = order.get("order_number")
-    if num:
-        return str(num)
-    name = order.get("name")
-    if isinstance(name, str) and name.lstrip("#").isdigit():
-        return name.lstrip("#")
-    return str(fallback_id)
+                    now_utc = datetime.utcnow()
 
+                    if order.created_at.tzinfo is not None:
+                        order_created_utc = order.created_at.astimezone(pytz.UTC).replace(tzinfo=None)
+                    else:
+                        order_created_utc = order.created_at
 
-@app.get("/health")
-def health():
-    """Проверка состояния сервиса"""
-    return {"status": "ok", "timestamp": int(time.time())}
+                    elapsed = now_utc - order_created_utc
+                    hours = int(elapsed.total_seconds() // 3600)
+                    minutes = int((elapsed.total_seconds() % 3600) // 60)
 
+                    if hours >= 3:
+                        urgency = "🚨"
+                    elif hours >= 2:
+                        urgency = "⚠️"
+                    elif hours >= 1:
+                        urgency = "🔥"
+                    else:
+                        urgency = "📍"
 
-@app.get("/")
-def root():
-    """Корневой путь"""
-    return {
-        "service": "Shopify Order Notifier",
-        "status": "running",
-        "endpoints": {
-            "health": "/health",
-            "webhook": "/webhooks/shopify/orders"
-        }
-    }
+                    message += f"{urgency} №{order_no} • {customer}"
 
+                    if hours > 0:
+                        message += f" ({hours}г {minutes}хв тому)\n"
+                    else:
+                        message += f" ({minutes}хв тому)\n"
 
-@app.post("/webhooks/shopify/orders")
-async def shopify_webhook(request: Request):
-    """Обработчик webhook от Shopify - С ИСПРАВЛЕННЫМ СОХРАНЕНИЕМ КОНТАКТНЫХ ДАННЫХ"""
-    logger.info("=== WEBHOOK RECEIVED ===")
+                if len(new_orders) > 15:
+                    message += f"\n<i>...та ще {len(new_orders) - 15} замовлень</i>\n"
 
-    # 1) Получаем и валидируем данные
-    raw_body = await request.body()
-    logger.info(f"Body size: {len(raw_body)} bytes")
+                message += f"\n🚀 <i>Час перетворити заявки в замовлення!</i>"
 
-    # HMAC валидация
-    hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
-    secret = get_shopify_webhook_secret()
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text="📋 Переглянути необроблені",
+                        callback_data="orders:list:new:offset=0"
+                    )
+                ]])
 
-    if not hmac_header:
-        logger.error("Missing X-Shopify-Hmac-Sha256 header")
-        raise HTTPException(status_code=403, detail="Missing HMAC header")
+                await self.bot.send_message(
+                    self.chat_id,
+                    message,
+                    reply_markup=keyboard
+                )
+                logger.info(f"Sent hourly NEW orders notification: {len(new_orders)} orders")
 
-    if not secret:
-        logger.error("Missing SHOPIFY_WEBHOOK_SECRET")
-        raise HTTPException(status_code=500, detail="Missing webhook secret")
+        except Exception as e:
+            logger.error(f"Error checking new orders: {e}", exc_info=True)
 
-    # Shopify использует secret как UTF-8 строку
-    secret_bytes = secret.encode('utf-8')
-    digest = hmac.new(secret_bytes, raw_body, hashlib.sha256).digest()
-    computed_hmac = base64.b64encode(digest).decode('utf-8')
+    async def _check_payment_reminders(self):
+        """Ежедневное напоминание об оплате в 10:30"""
+        try:
+            with get_session() as session:
+                waiting_orders = session.query(Order).filter(
+                    Order.status == OrderStatus.WAITING_PAYMENT
+                ).order_by(Order.updated_at.desc()).all()
 
-    if not hmac.compare_digest(computed_hmac, hmac_header):
-        logger.error(f"HMAC mismatch: computed={computed_hmac}, expected={hmac_header}")
-        raise HTTPException(status_code=403, detail="Invalid HMAC signature")
+                if not waiting_orders or not self.chat_id:
+                    logger.info("No payment reminders needed")
+                    return
 
-    logger.info("✅ HMAC validation passed")
+                message = f"💰 <b>Очікують оплату ({len(waiting_orders)} шт):</b>\n\n"
 
-    # Парсим JSON
-    try:
-        event = json.loads(raw_body)
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error: {e}")
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+                for order in waiting_orders[:15]:
+                    order_no = order.order_number or order.id
+                    customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
 
-    # Получаем order_id
-    order_id = event.get("id") or event.get("order_id")
-    if order_id is None:
-        logger.error("No order_id in event")
-        raise HTTPException(status_code=400, detail="order_id is missing")
+                    now_utc = datetime.utcnow()
 
-    logger.info(f"Processing order_id: {order_id}")
+                    if order.waiting_payment_since:
+                        if order.waiting_payment_since.tzinfo is not None:
+                            waiting_since_utc = order.waiting_payment_since.astimezone(pytz.UTC).replace(tzinfo=None)
+                        else:
+                            waiting_since_utc = order.waiting_payment_since
+                    else:
+                        if order.updated_at.tzinfo is not None:
+                            waiting_since_utc = order.updated_at.astimezone(pytz.UTC).replace(tzinfo=None)
+                        else:
+                            waiting_since_utc = order.updated_at
 
-    # 2) Проверяем идемпотентность
-    if await is_processed(order_id):
-        log_event("webhook_duplicate", order_id=str(order_id))
-        return {"status": "duplicate", "order_id": str(order_id)}
+                    elapsed = now_utc - waiting_since_utc
+                    hours = int(elapsed.total_seconds() // 3600)
+                    days = hours // 24
 
-    # 3) Получаем полные данные заказа
-    try:
-        from app.services.shopify_service import get_order
+                    if days >= 2:
+                        urgency = "🚨"
+                    elif days >= 1:
+                        urgency = "⚠️"
+                    elif hours >= 12:
+                        urgency = "🔥"
+                    else:
+                        urgency = "📍"
 
-        # Если webhook содержит полные данные - используем их
-        if len(event) > 5 and "line_items" in event:  # Полные данные заказа
-            order_full = event
-            logger.info(f"Using full order data from webhook")
-        else:
-            # Если только ID - получаем полные данные
-            logger.info(f"Fetching full order {order_id} from Shopify...")
-            order_full = get_order(order_id)
+                    message += f"{urgency} №{order_no} • {customer}"
 
-        pretty_order_no = _display_order_number(order_full, order_id)
-        log_event("order_data_ok", order_id=str(order_id), order_no=pretty_order_no)
+                    if days > 0:
+                        message += f" ({days} дн.)\n"
+                    elif hours > 0:
+                        message += f" ({hours} год.)\n"
+                    else:
+                        message += " (сьогодні)\n"
 
-    except Exception as e:
-        logger.error(f"Failed to get order data: {e}")
-        log_event("order_data_err", order_id=str(order_id), error=str(e))
+                if len(waiting_orders) > 15:
+                    message += f"\n<i>...та ще {len(waiting_orders) - 15} замовлень</i>\n"
 
-        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Не падаем, если не можем получить данные
-        order_full = {
-            "id": order_id,
-            "order_number": order_id,
-            "customer": {},
-            "line_items": [],
-            "total_price": "0.00",
-            "currency": "UAH"
-        }
-        pretty_order_no = str(order_id)
-        logger.warning(f"Using minimal order data for order {order_id}")
+                message += f"\n⚡ <i>Час закривати угоди!</i>"
 
-    # 4) Извлекаем данные с НОВОЙ ЛОГИКОЙ адресов
-    first_name, last_name, phone_e164 = _extract_customer_data_new_logic(order_full)
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text="💳 Переглянути очікують оплату",
+                        callback_data="orders:list:waiting:offset=0"
+                    )
+                ]])
 
-    # Логируем сценарий адресов
-    shipping = order_full.get('shipping_address', {})
-    billing = order_full.get('billing_address', {})
-    scenario = "same_address" if addresses_are_same(shipping, billing) else "different_addresses"
+                await self.bot.send_message(
+                    self.chat_id,
+                    message,
+                    reply_markup=keyboard
+                )
+                logger.info(f"Sent daily PAYMENT reminders: {len(waiting_orders)} orders")
 
-    logger.info(f"Address scenario: {scenario}")
-    logger.info(f"Contact: {first_name} {last_name}, Phone: {phone_e164}")
+        except Exception as e:
+            logger.error(f"Error checking payment reminders: {e}", exc_info=True)
 
-    # 5) ИСПРАВЛЕНИЕ: Помечаем как обработанный И обновляем контактные данные
-    logger.info(f"Marking order {order_id} as processed with contact data...")
+    async def _check_reminders(self):
+        """Проверка напоминаний о перезвоне - каждые 5 минут"""
+        try:
+            with get_session() as session:
+                now = datetime.utcnow()
+                reminders = session.query(Order).filter(
+                    Order.reminder_at.isnot(None),
+                    Order.reminder_at <= now
+                ).limit(10).all()
 
-    # Создаем копию данных заказа с обновленными контактными данными
-    order_data_with_contact = order_full.copy()
+                for order in reminders:
+                    try:
+                        order_no = order.order_number or order.id
+                        customer = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
+                        phone = order.customer_phone_e164 if order.customer_phone_e164 else "Телефон відсутній"
 
-    # Обновляем customer секцию с правильными контактными данными
-    if 'customer' not in order_data_with_contact:
-        order_data_with_contact['customer'] = {}
+                        message = (
+                            f"🔔 <b>Нагадування про дзвінок!</b>\n\n"
+                            f"📦 Замовлення №{order_no}\n"
+                            f"👤 Клієнт: {customer}\n"
+                            f"📱 Телефон: {phone}"
+                        )
 
-    order_data_with_contact['customer']['first_name'] = first_name
-    order_data_with_contact['customer']['last_name'] = last_name
+                        if order.comment:
+                            message += f"\n💬 Коментар: <i>{order.comment}</i>"
 
-    marked = await mark_processed(order_id, order_data_with_contact)
-    if not marked:
-        log_event("webhook_race_condition", order_id=str(order_id))
-        return {"status": "duplicate", "order_id": str(order_id)}
+                        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                        keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+                            InlineKeyboardButton(
+                                text="📦 Відкрити замовлення",
+                                callback_data=f"order:{order.id}:view"
+                            )
+                        ]])
 
-    # 6) ДОПОЛНИТЕЛЬНОЕ ИСПРАВЛЕНИЕ: Обновляем поля контактных данных в БД
-    try:
-        with get_session() as session:
-            order_obj = session.get(Order, order_id)
-            if order_obj:
-                # Принудительно обновляем контактные данные
-                order_obj.customer_first_name = first_name[:100] if first_name else ""
-                order_obj.customer_last_name = last_name[:100] if last_name else ""
-                if phone_e164:
-                    order_obj.customer_phone_e164 = phone_e164[:32]
+                        if self.chat_id:
+                            await self.bot.send_message(
+                                self.chat_id,
+                                message,
+                                reply_markup=keyboard
+                            )
+                            logger.info(f"Sent reminder for order {order_no}")
+
+                        order.reminder_at = None
+
+                    except Exception as e:
+                        logger.error(f"Error sending reminder for order {order.id}: {e}")
+
                 session.commit()
-                logger.info(f"✅ Updated contact data in DB: {first_name} {last_name}, {phone_e164}")
-    except Exception as e:
-        logger.error(f"Failed to update contact data in DB: {e}")
 
-    chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
-    if not chat_id:
-        logger.error("TELEGRAM_TARGET_CHAT_ID not set!")
-        raise HTTPException(status_code=500, detail="Telegram chat ID not configured")
+        except Exception as e:
+            logger.error(f"Error checking reminders: {e}", exc_info=True)
 
-    # 7) Отправляем ОТДЕЛЬНОЕ сообщение с кнопкой "Закрити"
-    try:
-        from app.bot.main import get_bot
+    async def start_polling(self):
+        """Запуск polling в фоновой задаче"""
+        try:
+            logger.info("Starting bot polling...")
 
-        bot = get_bot()
-        if not bot:
-            logger.error("Bot instance not available!")
-            raise HTTPException(status_code=500, detail="Bot not initialized")
+            if not self.scheduler.running:
+                self.scheduler.start()
+                logger.info("Scheduler started")
 
-        chat_id_int = int(chat_id)
+            await self.dp.start_polling(self.bot, allowed_updates=['message', 'callback_query'])
 
-        # Получаем обновленный объект заказа из БД
-        with get_session() as session:
-            order_obj = session.get(Order, order_id)
-            if not order_obj:
-                logger.error(f"Order {order_id} not found in DB after processing")
-                raise HTTPException(status_code=500, detail="Database error")
+        except Exception as e:
+            logger.error(f"Error in bot polling: {e}", exc_info=True)
+            raise
 
-            # WEBHOOK заказ: отправляется ОТДЕЛЬНО (не как navigation!)
-            from app.bot.services.message_builder import get_status_emoji
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    async def start(self):
+        """Запуск бота в фоне (non-blocking)"""
+        async with self._lock:
+            if self.polling_task and not self.polling_task.done():
+                logger.warning("Bot is already running")
+                return
 
-            # Строим сообщение
-            order_no = order_obj.order_number or order_obj.id
-            status_emoji = get_status_emoji(order_obj.status)
-            customer_name = f"{order_obj.customer_first_name or ''} {order_obj.customer_last_name or ''}".strip() or "Без імені"
-            phone = order_obj.customer_phone_e164 if order_obj.customer_phone_e164 else "Не вказано"
+            self.polling_task = asyncio.create_task(self.start_polling())
+            logger.info("Bot polling task created")
 
-            main_message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} Новий
-━━━━━━━━━━━━━━━━━━━━━━
-👤 {customer_name}
-📱 {phone}"""
+            await asyncio.sleep(1)
 
-            # Добавляем краткую информацию о товарах
-            if order_obj.raw_json and order_obj.raw_json.get("line_items"):
-                items = order_obj.raw_json["line_items"]
-                if items:
-                    items_text = []
-                    for item in items[:3]:
-                        title = item.get("title", "")
-                        qty = item.get("quantity", 0)
-                        items_text.append(f"• {title} x{qty}")
+            try:
+                me = await self.bot.get_me()
+                logger.info(f"Bot started successfully: @{me.username}")
+            except Exception as e:
+                logger.error(f"Failed to start bot: {e}")
+                if self.polling_task:
+                    self.polling_task.cancel()
+                raise
 
-                    if items_text:
-                        main_message += f"\n🛍 <b>Товари:</b> {', '.join(items_text)}"
-                        if len(items) > 3:
-                            main_message += f" <i>+ще {len(items) - 3}</i>"
+    async def stop(self):
+        """Остановка бота"""
+        async with self._lock:
+            logger.info("Stopping Telegram bot...")
 
-                # Сумма
-                total = order_obj.raw_json.get("total_price", "")
-                currency = order_obj.raw_json.get("currency", "UAH")
-                if total:
-                    main_message += f"\n💰 <b>Сума:</b> {total} {currency}"
+            try:
+                if self.polling_task and not self.polling_task.done():
+                    self.polling_task.cancel()
+                    try:
+                        await self.polling_task
+                    except asyncio.CancelledError:
+                        pass
 
-            main_message += "\n━━━━━━━━━━━━━━━━━━━━━━"
+                await self.dp.stop_polling()
 
-            # ПРОСТАЯ клавиатура с кнопкой "Закрити"
-            webhook_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                # Кнопки статуса (если NEW)
-                [
-                    InlineKeyboardButton(text="✅ Зв'язались", callback_data=f"order:{order_id}:contacted"),
-                    InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order_id}:cancel")
-                ] if order_obj.status == OrderStatus.NEW else (
-                    [
-                        InlineKeyboardButton(text="💰 Оплатили", callback_data=f"order:{order_id}:paid"),
-                        InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order_id}:cancel")
-                    ] if order_obj.status == OrderStatus.WAITING_PAYMENT else []
-                ),
+                if self.scheduler.running:
+                    self.scheduler.shutdown(wait=False)
 
-                # Файлы
-                [
-                    InlineKeyboardButton(text="📄 PDF", callback_data=f"order:{order_id}:resend:pdf"),
-                    InlineKeyboardButton(text="📱 VCF", callback_data=f"order:{order_id}:resend:vcf")
-                ],
+                await self.bot.session.close()
 
-                # Реквизиты
-                [
-                    InlineKeyboardButton(text="💳 Реквізити", callback_data=f"order:{order_id}:payment")
-                ],
+                logger.info("Bot stopped successfully")
 
-                # Дополнительные действия (для активных заказов)
-                [
-                    InlineKeyboardButton(text="💬 Коментар", callback_data=f"order:{order_id}:comment"),
-                    InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order_id}:reminder")
-                ] if order_obj.status in [OrderStatus.NEW, OrderStatus.WAITING_PAYMENT] else [],
-
-                # КНОПКА ЗАКРЫТЬ для webhook заказов
-                [
-                    InlineKeyboardButton(text="❌ Закрити", callback_data=f"webhook:{order_id}:close")
-                ]
-            ])
-
-            # Отправляем ОТДЕЛЬНОЕ сообщение (НЕ через navigation!)
-            webhook_msg = await bot.send_message(
-                chat_id=chat_id_int,
-                text=main_message,
-                reply_markup=webhook_keyboard
-            )
-
-            # Трекаем как WEBHOOK сообщение
-            from app.bot.routers.shared import add_webhook_message
-            add_webhook_message(order_id, webhook_msg.message_id)
-
-            logger.info(f"Webhook order card sent with 'Закрити' button: message_id {webhook_msg.message_id}")
-            logger.info(f"Contact identified: {first_name} {last_name}")
-            log_event("webhook_processed", order_id=str(order_id), status="success", scenario=scenario,
-                      contact_name=f"{first_name} {last_name}")
-
-    except Exception as e:
-        logger.error(f"Failed to send via bot: {e}", exc_info=True)
-        log_event("bot_send_error", order_id=str(order_id), error=str(e))
-        raise HTTPException(status_code=500, detail="Failed to send to Telegram")
-
-    logger.info(f"=== WEBHOOK PROCESSED SUCCESSFULLY for order {order_id} (scenario: {scenario}) ===")
-    return {"status": "ok", "order_id": str(order_id), "scenario": scenario,
-            "contact_name": f"{first_name} {last_name}"}
+            except Exception as e:
+                logger.error(f"Error stopping bot: {e}", exc_info=True)
 
 
-# Добавляем дополнительные эндпойнты для отладки
-@app.get("/debug/orders")
-async def debug_orders():
-    """Отладочный эндпойнт для просмотра заказов"""
-    try:
-        with get_session() as session:
-            orders = session.query(Order).order_by(Order.created_at.desc()).limit(10).all()
-
-            result = []
-            for order in orders:
-                result.append({
-                    "id": order.id,
-                    "order_number": order.order_number,
-                    "status": order.status.value,
-                    "customer_name": f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip(),
-                    "customer_phone": order.customer_phone_e164,
-                    "created_at": order.created_at.isoformat() if order.created_at else None,
-                    "is_processed": order.is_processed
-                })
-
-            return {"orders": result, "total": len(result)}
-
-    except Exception as e:
-        logger.error(f"Error in debug endpoint: {e}")
-        return {"error": str(e)}
+# Глобальный экземпляр бота
+_bot_instance: Optional[TelegramBot] = None
 
 
-if __name__ == "__main__":
-    import uvicorn
+def get_bot_instance() -> TelegramBot:
+    """Получить или создать экземпляр бота"""
+    global _bot_instance
+    if _bot_instance is None:
+        _bot_instance = TelegramBot()
+    return _bot_instance
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8003, reload=True)
+
+async def start_bot():
+    """Функция для запуска бота из FastAPI lifespan"""
+    bot = get_bot_instance()
+    await bot.start()
+
+
+async def stop_bot():
+    """Функция для остановки бота"""
+    global _bot_instance
+    if _bot_instance:
+        await _bot_instance.stop()
+        _bot_instance = None
+
+
+def get_bot() -> Optional[Bot]:
+    """Получить экземпляр Bot для отправки сообщений"""
+    instance = get_bot_instance()
+    return instance.bot if instance else None
