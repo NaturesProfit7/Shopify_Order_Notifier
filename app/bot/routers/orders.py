@@ -457,12 +457,12 @@ async def on_payment_info(callback: CallbackQuery):
 
 Надсилаю всю інформацію окремо, щоб вам було зручно копіювати ☺️👇"""
 
-    # Копируемые сообщения В СТРОГОМ ПОРЯДКЕ
+    # Копируемые сообщения в строгом порядке
     copy_messages = [
-        "UA613220010000026004340089782",
         "ФОП Нитяжук Катерина Сергіївна",
+        "UA613220010000026004340089782",
         "3577508940",
-        "Оплата за товар"
+        "Оплата за товар",
     ]
 
     # Очищаем старые файлы
@@ -480,38 +480,23 @@ async def on_payment_info(callback: CallbackQuery):
         track_order_file_message(callback.from_user.id, order_id, main_msg.message_id)
         debug_print(f"✅ Main message sent and tracked: ID {main_msg.message_id}")
 
-        # ШАГ 2: Создаем задачи для 4 копируемых сообщений
-        async def send_and_track(msg_text: str):
+        # ШАГ 2: отправляем 4 копируемых сообщения последовательно
+        async def send_and_track(text: str):
             msg = await callback.bot.send_message(
                 callback.message.chat.id,
-                f"<code>{msg_text}</code>"
+                f"<code>{text}</code>",
             )
             track_order_file_message(callback.from_user.id, order_id, msg.message_id)
-            debug_print(
-                f"✅ Copy message sent and tracked: ID {msg.message_id} - {msg_text[:20]}...")
-            return msg
 
-        copy_tasks = [send_and_track(msg_text) for msg_text in copy_messages]
-
-        # ШАГ 3: Отправляем 4 копируемых сообщения ПАРАЛЛЕЛЬНО
-        # gather сохраняет порядок результатов согласно порядку задач
-        copy_results = await asyncio.gather(*copy_tasks, return_exceptions=True)
+        for msg_text in copy_messages:
+            await send_and_track(msg_text)
 
         elapsed_time = (asyncio.get_event_loop().time() - start_time) * 1000
         debug_print(f"💳 Payment info sent successfully in {elapsed_time:.0f}ms")
 
-        # Проверяем, все ли сообщения отправлены успешно
-        successful_count = 1 + sum(1 for r in copy_results if not isinstance(r, Exception))
-        if successful_count < 5:
-            debug_print(f"⚠️ Only {successful_count}/5 messages sent successfully", "WARN")
-
-        # Проверяем, что все 5 сообщений зафиксированы
         tracked = get_order_file_messages(callback.from_user.id, order_id)
-        if len(tracked) != 5:
-            debug_print(
-                f"⚠️ Tracking mismatch: expected 5, got {len(tracked)} messages", "WARN")
-        else:
-            debug_print(f"📌 Tracking all 5 messages for order {order_id}")
+        assert len(tracked) == 5
+        debug_print(f"📌 Tracking all {len(tracked)} messages for order {order_id}")
 
     except Exception as e:
         debug_print(f"❌ Error sending payment info: {e}", "ERROR")
