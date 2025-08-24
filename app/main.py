@@ -268,21 +268,19 @@ async def shopify_webhook(request: Request):
     except Exception as e:
         logger.error(f"Failed to update contact data in DB: {e}")
 
-    chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
-    if not chat_id:
-        logger.error("TELEGRAM_TARGET_CHAT_ID not set!")
-        raise HTTPException(status_code=500, detail="Telegram chat ID not configured")
-
     # 7) Отправляем ОТДЕЛЬНОЕ сообщение с кнопкой "Закрити"
     try:
         from app.bot.main import get_bot
-
         bot = get_bot()
         if not bot:
             logger.error("Bot instance not available!")
             raise HTTPException(status_code=500, detail="Bot not initialized")
 
-        chat_id_int = int(chat_id)
+        allowed_ids_str = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")
+        manager_ids = [int(uid.strip()) for uid in allowed_ids_str.split(",") if uid.strip()]
+        if not manager_ids:
+            logger.error("TELEGRAM_ALLOWED_USER_IDS not set or empty!")
+            raise HTTPException(status_code=500, detail="No Telegram managers configured")
 
         # Получаем обновленный объект заказа из БД
         with get_session() as session:
@@ -365,18 +363,17 @@ async def shopify_webhook(request: Request):
                 ]
             ])
 
-            # Отправляем ОТДЕЛЬНОЕ сообщение (НЕ через navigation!)
-            webhook_msg = await bot.send_message(
-                chat_id=chat_id_int,
-                text=main_message,
-                reply_markup=webhook_keyboard
-            )
-
-            # Трекаем как WEBHOOK сообщение
+            # Отправляем сообщение каждому менеджеру
             from app.bot.routers.shared import add_webhook_message
-            add_webhook_message(order_id, webhook_msg.message_id)
+            for manager_id in manager_ids:
+                msg = await bot.send_message(
+                    manager_id,
+                    main_message,
+                    reply_markup=webhook_keyboard
+                )
+                add_webhook_message(order_id, manager_id, msg.message_id)
 
-            logger.info(f"Webhook order card sent with 'Закрити' button: message_id {webhook_msg.message_id}")
+            logger.info(f"Webhook order card sent to managers: {manager_ids}")
             logger.info(f"Contact identified: {first_name} {last_name}")
             log_event("webhook_processed", order_id=str(order_id), status="success", scenario=scenario,
                       contact_name=f"{first_name} {last_name}")

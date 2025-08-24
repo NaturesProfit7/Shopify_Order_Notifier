@@ -11,7 +11,8 @@ user_order_files: Dict[int, Dict[int, Set[int]]] = {}  # user_id -> {order_id ->
 user_all_navigation_messages: Dict[int, Set[int]] = {}  # user_id -> {message_ids}
 
 # НОВОЕ: Трекинг WEBHOOK сообщений заказов
-webhook_order_messages: Dict[int, Set[int]] = {}  # order_id -> {message_ids}
+# Теперь храним сообщения отдельно для каждого менеджера
+webhook_order_messages: Dict[int, Dict[int, Set[int]]] = {}  # order_id -> {user_id -> {message_ids}}
 
 
 def get_navigation_message_id(user_id: int) -> int | None:
@@ -62,37 +63,43 @@ def remove_navigation_message(user_id: int, message_id: int) -> None:
 
 # НОВЫЕ функции для WEBHOOK сообщений
 
-def add_webhook_message(order_id: int, message_id: int) -> None:
-    """Добавить ID сообщения webhook заказа"""
+def add_webhook_message(order_id: int, user_id: int, message_id: int) -> None:
+    """Добавить ID сообщения webhook заказа для конкретного менеджера"""
     if order_id not in webhook_order_messages:
-        webhook_order_messages[order_id] = set()
-    webhook_order_messages[order_id].add(message_id)
+        webhook_order_messages[order_id] = {}
+    if user_id not in webhook_order_messages[order_id]:
+        webhook_order_messages[order_id][user_id] = set()
+    webhook_order_messages[order_id][user_id].add(message_id)
 
 
-def get_webhook_messages(order_id: int) -> Set[int]:
-    """Получить все ID webhook сообщений заказа"""
-    return webhook_order_messages.get(order_id, set()).copy()
+def get_webhook_messages(order_id: int) -> Dict[int, Set[int]]:
+    """Получить все webhook сообщения заказа, сгруппированные по менеджерам"""
+    if order_id not in webhook_order_messages:
+        return {}
+    return {uid: msgs.copy() for uid, msgs in webhook_order_messages[order_id].items()}
 
 
 def clear_webhook_messages(order_id: int) -> None:
     """Очистить все webhook сообщения заказа"""
     if order_id in webhook_order_messages:
-        webhook_order_messages[order_id].clear()
+        del webhook_order_messages[order_id]
 
 
 def is_webhook_message(message_id: int) -> bool:
     """Проверить, является ли сообщение webhook сообщением"""
-    for order_id, message_ids in webhook_order_messages.items():
-        if message_id in message_ids:
-            return True
+    for messages_by_user in webhook_order_messages.values():
+        for message_ids in messages_by_user.values():
+            if message_id in message_ids:
+                return True
     return False
 
 
 def get_order_by_webhook_message(message_id: int) -> int | None:
     """Получить order_id по ID webhook сообщения"""
-    for order_id, message_ids in webhook_order_messages.items():
-        if message_id in message_ids:
-            return order_id
+    for order_id, messages_by_user in webhook_order_messages.items():
+        for message_ids in messages_by_user.values():
+            if message_id in message_ids:
+                return order_id
     return None
 
 
