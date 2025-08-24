@@ -28,6 +28,8 @@ from .shared import (
     clear_webhook_messages
 )
 
+PAYMENT_MESSAGE_DELAY = 1  # seconds to wait between payment messages
+
 router = Router()
 
 
@@ -490,6 +492,7 @@ async def on_payment_info(callback: CallbackQuery):
 
         for msg_text in copy_messages:
             await send_and_track(msg_text)
+            await asyncio.sleep(PAYMENT_MESSAGE_DELAY)
 
         elapsed_time = (asyncio.get_event_loop().time() - start_time) * 1000
         debug_print(f"💳 Payment info sent successfully in {elapsed_time:.0f}ms")
