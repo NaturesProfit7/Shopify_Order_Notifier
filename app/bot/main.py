@@ -46,7 +46,7 @@ class TelegramBot:
         storage = MemoryStorage()
         self.dp = Dispatcher(storage=storage)
 
-        self.scheduler = AsyncIOScheduler(timezone="Europe/Kiev")
+        self.scheduler = AsyncIOScheduler(timezone="Europe/Kyiv")
 
         # Polling task
         self.polling_task: Optional[asyncio.Task] = None
@@ -127,7 +127,7 @@ class TelegramBot:
         # 3. Ежедневное напоминание об оплате в 10:30
         self.scheduler.add_job(
             self._check_payment_reminders,
-            trigger=CronTrigger(hour=10, minute=30, timezone="Europe/Kiev"),
+            trigger=CronTrigger(hour=10, minute=30, timezone="Europe/Kyiv"),
             id="payment_reminders",
             replace_existing=True
         )
@@ -136,7 +136,7 @@ class TelegramBot:
 
     def _is_working_hours(self) -> bool:
         """Проверка рабочего времени 10:00-22:00 Киев"""
-        kiev_tz = pytz.timezone("Europe/Kiev")
+        kiev_tz = pytz.timezone("Europe/Kyiv")
         now_kiev = datetime.now(kiev_tz)
         hour = now_kiev.hour
 

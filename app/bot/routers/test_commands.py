@@ -134,7 +134,7 @@ async def test_working_hours(message: Message):
         bot_instance = get_bot_instance()
         is_working = bot_instance._is_working_hours()
 
-        kiev_tz = pytz.timezone("Europe/Kiev")
+        kiev_tz = pytz.timezone("Europe/Kyiv")
         now_kiev = datetime.now(kiev_tz)
 
         status = "✅ Робочий час" if is_working else "❌ Не робочий час"
