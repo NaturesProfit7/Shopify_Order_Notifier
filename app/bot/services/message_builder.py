@@ -1,7 +1,9 @@
 # app/bot/services/message_builder.py
 from app.models import Order, OrderStatus
 
-DIVIDER = '—' * 20
+# Using box-drawing characters keeps the divider a consistent width across
+# different devices and avoids wrapping to a second line.
+DIVIDER = '━' * 22
 
 
 def get_status_emoji(status: OrderStatus) -> str:
