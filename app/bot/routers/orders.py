@@ -24,8 +24,7 @@ from .shared import (
     order_card_keyboard,
     is_webhook_order_message,
     get_webhook_order_keyboard,
-    get_webhook_messages,
-    clear_webhook_messages
+    get_webhook_messages
 )
 
 PAYMENT_MESSAGE_DELAY = 1  # seconds to wait between payment messages
@@ -200,65 +199,51 @@ async def notify_other_managers_about_status_change(
     debug_print(f"📢 NOTIFYING OTHER MANAGERS: order {order.id}, status change by user {changed_by_user_id}")
 
     # Получаем все webhook сообщения этого заказа
-    webhook_message_ids = get_webhook_messages(order.id)
-    debug_print(f"📢 Found {len(webhook_message_ids)} webhook messages to update")
+    webhook_messages = get_webhook_messages(order.id)
+    total_messages = sum(len(msgs) for msgs in webhook_messages.values())
+    debug_print(f"📢 Found {total_messages} webhook messages to update")
 
-    if not webhook_message_ids:
+    if not webhook_messages:
         debug_print("📢 No webhook messages found - skipping notifications")
         return
 
-    # Получаем ID чата (предполагаем, что все webhook сообщения в одном чате)
-    import os
-    chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
-    if not chat_id:
-        debug_print("❌ TELEGRAM_TARGET_CHAT_ID not set", "ERROR")
-        return
+    updated_count = 0
+    for manager_id, message_ids in webhook_messages.items():
+        if manager_id == changed_by_user_id:
+            continue
 
-    try:
-        chat_id_int = int(chat_id)
-
-        # Обновляем каждое webhook сообщение
-        updated_count = 0
-        for message_id in webhook_message_ids:
+        for message_id in message_ids:
             try:
-                # Строим обновленное сообщение
                 updated_message = build_order_card_message(order, detailed=True)
                 updated_keyboard = get_webhook_order_keyboard(order)
 
-                # Обновляем сообщение
                 await bot.edit_message_text(
                     text=updated_message,
-                    chat_id=chat_id_int,
+                    chat_id=manager_id,
                     message_id=message_id,
                     reply_markup=updated_keyboard
                 )
-
                 updated_count += 1
-                debug_print(f"✅ Updated webhook message {message_id}")
-
+                debug_print(f"✅ Updated webhook message {message_id} for user {manager_id}")
             except Exception as e:
-                debug_print(f"❌ Failed to update webhook message {message_id}: {e}", "WARN")
+                debug_print(f"❌ Failed to update webhook message {message_id} for user {manager_id}: {e}", "WARN")
 
-        # Отправляем уведомление об изменении
-        if updated_count > 0:
+        try:
             old_status_text = get_status_text(old_status)
             new_status_text = get_status_text(new_status)
             order_no = order.order_number or order.id
-
             notification = (
                 f"🔄 <b>Статус змінено</b>\n"
                 f"📦 Замовлення #{order_no}\n"
                 f"📈 {old_status_text} → {new_status_text}\n"
                 f"👤 Менеджер: @{changed_by_username}"
             )
+            await bot.send_message(manager_id, notification)
+            debug_print(f"✅ Sent status change notification to user {manager_id}")
+        except Exception as e:
+            debug_print(f"❌ Failed to send status change notification to user {manager_id}: {e}", "WARN")
 
-            await bot.send_message(chat_id_int, notification)
-            debug_print(f"✅ Sent status change notification to chat")
-
-        debug_print(f"📢 NOTIFICATION COMPLETE: Updated {updated_count}/{len(webhook_message_ids)} messages")
-
-    except Exception as e:
-        debug_print(f"❌ NOTIFICATION FAILED: {e}", "ERROR")
+    debug_print(f"📢 NOTIFICATION COMPLETE: Updated {updated_count}/{total_messages} messages")
 
 
 @router.callback_query(F.data.regexp(r"^order:\d+:view$"))
