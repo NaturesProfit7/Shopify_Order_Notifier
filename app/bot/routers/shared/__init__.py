@@ -27,7 +27,7 @@ from .state import (
     get_order_file_messages,
     clear_order_file_messages,
     clear_all_user_files,
-    # НОВЫЕ функции для webhook
+    # НОВЫЕ функции для webhook (учёт сообщений по чатам)
     add_webhook_message,
     get_webhook_messages,
     clear_webhook_messages,
@@ -88,3 +88,4 @@ __all__ = [
     'order_card_keyboard',
     'reminder_time_keyboard'
 ]
+
