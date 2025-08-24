@@ -139,11 +139,13 @@ def root():
         "status": "running",
         "endpoints": {
             "health": "/health",
-            "webhook": "/webhooks/shopify/orders"
+            "webhook": "/webhooks/shopify/orders",
+            "telegram": "/telegram/webhook"
         }
     }
 
 
+@app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
     """Minimal handler for Telegram callbacks used in tests."""
     data = await request.json()
