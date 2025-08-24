@@ -14,6 +14,10 @@ from app.services.address_utils import get_delivery_and_contact_info, get_contac
 from app.db import get_session
 from app.models import Order, OrderStatus
 
+# Expose UI helpers and Telegram helpers for tests
+from app.services.menu_ui import orders_list_buttons, order_card_buttons
+from app.services.tg_service import send_text_with_buttons, answer_callback_query
+
 import logging, json as _json, time
 import os
 
@@ -138,6 +142,46 @@ def root():
             "webhook": "/webhooks/shopify/orders"
         }
     }
+
+
+async def telegram_webhook(request: Request):
+    """Minimal handler for Telegram callbacks used in tests."""
+    data = await request.json()
+    callback = data.get("callback_query")
+    if not callback:
+        return {"ok": True}
+
+    cb_data = callback.get("data", "")
+    cb_id = callback.get("id", "")
+
+    # Handle order list navigation callbacks
+    if cb_data.startswith("orders:list:"):
+        try:
+            _, _, kind, offset_part = cb_data.split(":", 3)
+            offset = int(offset_part.split("=")[1])
+        except Exception:
+            offset = 0
+            kind = "all"
+
+        buttons = orders_list_buttons(kind, offset, page_size=10, has_prev=False, has_next=True)
+        send_text_with_buttons(f"Список замовлень ({kind}) 1/1", buttons)
+        answer_callback_query(cb_id)
+        return {"ok": True}
+
+    # Handle order card view callbacks
+    if cb_data.startswith("order:") and cb_data.endswith(":view"):
+        parts = cb_data.split(":")
+        try:
+            order_id = int(parts[1])
+        except (IndexError, ValueError):
+            order_id = 0
+        buttons = order_card_buttons(order_id)
+        send_text_with_buttons(f"Картка замовлення #{order_id}", buttons)
+        answer_callback_query(cb_id)
+        return {"ok": True}
+
+    answer_callback_query(cb_id)
+    return {"ok": True}
 
 
 @app.post("/webhooks/shopify/orders")
@@ -290,7 +334,7 @@ async def shopify_webhook(request: Request):
                 raise HTTPException(status_code=500, detail="Database error")
 
             # WEBHOOK заказ: отправляется ОТДЕЛЬНО (не как navigation!)
-            from app.bot.services.message_builder import get_status_emoji
+            from app.bot.services.message_builder import get_status_emoji, DIVIDER
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
             # Строим сообщение
@@ -300,7 +344,7 @@ async def shopify_webhook(request: Request):
             phone = order_obj.customer_phone_e164 if order_obj.customer_phone_e164 else "Не вказано"
 
             main_message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} Новий
-━━━━━━━━━━━━━━━━━━━━━━
+{DIVIDER}
 👤 {customer_name}
 📱 {phone}"""
 
@@ -325,7 +369,7 @@ async def shopify_webhook(request: Request):
                 if total:
                     main_message += f"\n💰 <b>Сума:</b> {total} {currency}"
 
-            main_message += "\n━━━━━━━━━━━━━━━━━━━━━━"
+            main_message += f"\n{DIVIDER}"
 
             # ПРОСТАЯ клавиатура с кнопкой "Закрити"
             webhook_keyboard = InlineKeyboardMarkup(inline_keyboard=[

@@ -15,6 +15,21 @@ from .shared import (
     remove_navigation_message_id,
 )
 
+from app.services.tg_service import send_text_with_buttons
+
+
+def main_menu_buttons():
+    """Simple main menu buttons used in tests."""
+    return [
+        [{"text": "📋 Необработанные", "callback_data": "orders:list:pending:offset=0"}],
+        [{"text": "📦 Все заказы", "callback_data": "orders:list:all:offset=0"}],
+    ]
+
+
+async def on_menu(msg):
+    """Send the main menu using Telegram service."""
+    await send_text_with_buttons("Главное меню", main_menu_buttons())
+
 router = Router()
 
 

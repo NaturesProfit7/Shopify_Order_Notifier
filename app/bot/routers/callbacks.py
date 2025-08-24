@@ -10,9 +10,16 @@ from typing import Dict, Set, Optional
 
 from app.db import get_session
 from app.models import Order, OrderStatus, OrderStatusHistory
-from app.bot.services.message_builder import get_status_emoji, get_status_text
+from app.bot.services.message_builder import (
+    get_status_emoji,
+    get_status_text,
+    build_order_message,
+    DIVIDER,
+)
 from app.services.pdf_service import build_order_pdf
 from app.services.vcf_service import build_contact_vcf
+from app.services.menu_ui import order_card_buttons
+from app.services.tg_service import send_text_with_buttons
 import os
 
 router = Router()
@@ -37,6 +44,24 @@ def check_permission(user_id: int) -> bool:
 def track_navigation_message(user_id: int, message_id: int):
     """Отслеживаем основное навигационное сообщение пользователя"""
     user_navigation_messages[user_id] = message_id
+
+
+async def on_order_view_click(cb: CallbackQuery):
+    """Show detailed order information when callback is received."""
+    parts = (cb.data or "").split(":")
+    try:
+        order_id = int(parts[1])
+    except (IndexError, ValueError):
+        await cb.answer()
+        return
+
+    with get_session() as session:
+        order = session.get(Order, order_id)
+
+    message = build_order_message(order, detailed=True)
+    buttons = order_card_buttons(order.id)
+    await send_text_with_buttons(message, buttons)
+    await cb.answer()
 
 
 def track_order_file_message(user_id: int, order_id: int, message_id: int):
@@ -105,7 +130,7 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
     phone = format_phone_compact(order.customer_phone_e164)
 
     message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} {status_text}
-━━━━━━━━━━━━━━━━━━━━━━
+{DIVIDER}
 👤 {customer_name}
 📱 {phone}"""
 
@@ -141,7 +166,7 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
         if total:
             message += f"\n💰 <b>Сума:</b> {total} {currency}"
 
-    message += "\n━━━━━━━━━━━━━━━━━━━━━━"
+    message += f"\n{DIVIDER}"
 
     # Дополнительная информация
     if order.comment:

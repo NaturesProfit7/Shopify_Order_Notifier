@@ -1,6 +1,9 @@
 # app/bot/services/message_builder.py
 from app.models import Order, OrderStatus
 
+# Using a simple hyphen line avoids rendering issues across devices
+DIVIDER = "-" * 5
+
 
 def get_status_emoji(status: OrderStatus) -> str:
     """Получить эмодзи для статуса"""
@@ -46,7 +49,7 @@ def build_order_message(order: Order, detailed: bool = False) -> str:
 
     # Основное сообщение
     message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} {status_text}
-━━━━━━━━━━━━━━━━━━━━━━
+{DIVIDER}
 👤 {customer_name}
 📱 {phone}"""
 
@@ -54,7 +57,7 @@ def build_order_message(order: Order, detailed: bool = False) -> str:
     if detailed and order.raw_json:
         data = order.raw_json
 
-        message += "\n━━━━━━━━━━━━━━━━━━━━━━"
+        message += f"\n{DIVIDER}"
 
         # Товары
         items = data.get("line_items", [])
@@ -88,7 +91,7 @@ def build_order_message(order: Order, detailed: bool = False) -> str:
 
     # Дополнительная информация (если есть)
     if order.comment or order.reminder_at or order.processed_by_username:
-        message += "\n━━━━━━━━━━━━━━━━━━━━━━"
+        message += f"\n{DIVIDER}"
 
         if order.comment:
             message += f"\n💬 <i>Коментар: {order.comment}</i>"
