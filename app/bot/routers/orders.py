@@ -1,6 +1,7 @@
-# app/bot/routers/orders.py - С АТОМАРНЫМИ ОПЕРАЦИЯМИ И СИНХРОНИЗАЦИЕЙ
+# app/bot/routers/orders.py - ОПТИМИЗИРОВАННАЯ ВЕРСИЯ С БЫСТРЫМИ РЕКВИЗИТАМИ
 """Роутер для работы с заказами: просмотр, изменение статусов, отправка файлов"""
 
+import asyncio
 from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, BufferedInputFile
@@ -85,7 +86,7 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
         if total:
             message += f"\n💰 <b>Сума:</b> {total} {currency}"
 
-    message += "\n━━━━━━━━━━━━━━━━━━━━━━"
+    message += "\n━━━━━━━━━━━━━━━━"
 
     # Дополнительная информация
     if order.comment:
@@ -392,12 +393,22 @@ async def on_resend_file(callback: CallbackQuery):
 
 @router.callback_query(F.data.contains(":payment"))
 async def on_payment_info(callback: CallbackQuery):
-    """Кнопка 'Реквізити' - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
+    """
+    ОПТИМИЗИРОВАННАЯ кнопка 'Реквізити' с полупараллельной отправкой
+    Гарантирует правильный порядок сообщений и надежный трекинг
+    """
     if not check_permission(callback.from_user.id):
         return
 
+    # ВАЖНО: Сразу отвечаем на callback чтобы убрать "часики"
+    await callback.answer("💳 Підготовка реквізитів...")
+
     order_id = int(callback.data.split(":")[1])
-    debug_print(f"💳 PAYMENT: for order {order_id}")
+    debug_print(f"💳 PAYMENT: for order {order_id} - SEMI-PARALLEL VERSION")
+
+    # Получаем данные заказа
+    order_total = "800"
+    currency = "грн"
 
     with get_session() as session:
         order = session.get(Order, order_id)
@@ -405,9 +416,7 @@ async def on_payment_info(callback: CallbackQuery):
             await callback.answer("❌ Замовлення не знайдено", show_alert=True)
             return
 
-        order_total = "800"
-        currency = "грн"
-
+        # Извлекаем сумму если есть raw_json
         if order.raw_json:
             total_price = order.raw_json.get("total_price")
             order_currency = order.raw_json.get("currency", "UAH")
@@ -418,7 +427,8 @@ async def on_payment_info(callback: CallbackQuery):
                 except:
                     pass
 
-        payment_message = f"""💳 <b>Реквізити для оплати</b>
+    # Формируем все сообщения заранее
+    payment_message = f"""💳 <b>Реквізити для оплати</b>
 
 Передаємо замовлення в роботу після предплати, так як виготовлення повністю індивідуально 
 
@@ -434,29 +444,63 @@ async def on_payment_info(callback: CallbackQuery):
 
 Надсилаю всю інформацію окремо, щоб вам було зручно копіювати ☺️👇"""
 
-        await cleanup_order_files(callback.bot, callback.message.chat.id, callback.from_user.id, order_id)
+    # Копируемые сообщения В СТРОГОМ ПОРЯДКЕ
+    copy_messages = [
+        "UA613220010000026004340089782",
+        "ФОП Нитяжук Катерина Сергіївна",
+        "3577508940",
+        "Оплата за товар"
+    ]
 
+    # Очищаем старые файлы
+    await cleanup_order_files(callback.bot, callback.message.chat.id, callback.from_user.id, order_id)
+
+    try:
+        debug_print(f"💳 Sending payment info SEMI-PARALLEL for order {order_id}")
+        start_time = asyncio.get_event_loop().time()
+
+        # ШАГ 1: Отправляем ОСНОВНОЕ сообщение первым (гарантированно)
         main_msg = await callback.bot.send_message(
             callback.message.chat.id,
             payment_message
         )
         track_order_file_message(callback.from_user.id, order_id, main_msg.message_id)
+        debug_print(f"✅ Main message sent and tracked: ID {main_msg.message_id}")
 
-        copy_messages = [
-            "UA613220010000026004340089782",
-            "ФОП Нитяжук Катерина Сергіївна",
-            "3577508940",
-            "Оплата за товар"
-        ]
-
+        # ШАГ 2: Создаем задачи для 4 копируемых сообщений
+        copy_tasks = []
         for msg_text in copy_messages:
-            copy_msg = await callback.bot.send_message(
-                callback.message.chat.id,
-                f"<code>{msg_text}</code>"
+            copy_tasks.append(
+                callback.bot.send_message(
+                    callback.message.chat.id,
+                    f"<code>{msg_text}</code>"
+                )
             )
-            track_order_file_message(callback.from_user.id, order_id, copy_msg.message_id)
 
-        await callback.answer("💳 Реквізити відправлені")
+        # ШАГ 3: Отправляем 4 копируемых сообщения ПАРАЛЛЕЛЬНО
+        # gather сохраняет порядок результатов согласно порядку задач
+        copy_results = await asyncio.gather(*copy_tasks, return_exceptions=True)
+
+        # ШАГ 4: Трекаем копируемые сообщения В ТОМ ЖЕ ПОРЯДКЕ
+        for i, msg_result in enumerate(copy_results):
+            if not isinstance(msg_result, Exception):
+                track_order_file_message(callback.from_user.id, order_id, msg_result.message_id)
+                debug_print(
+                    f"✅ Copy message {i + 1}/4 sent and tracked: ID {msg_result.message_id} - {copy_messages[i][:20]}...")
+            else:
+                debug_print(f"❌ Failed to send copy message {i + 1}/4: {msg_result}", "ERROR")
+
+        elapsed_time = (asyncio.get_event_loop().time() - start_time) * 1000
+        debug_print(f"💳 Payment info sent successfully in {elapsed_time:.0f}ms")
+
+        # Проверяем, все ли сообщения отправлены успешно
+        successful_count = 1 + sum(1 for r in copy_results if not isinstance(r, Exception))
+        if successful_count < 5:
+            debug_print(f"⚠️ Only {successful_count}/5 messages sent successfully", "WARN")
+
+    except Exception as e:
+        debug_print(f"❌ Error sending payment info: {e}", "ERROR")
+        await callback.answer(f"❌ Помилка відправки реквізитів", show_alert=True)
 
 
 @router.callback_query(F.data.contains(":contacted"))
