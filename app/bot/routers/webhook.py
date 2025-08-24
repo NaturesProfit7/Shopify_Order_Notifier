@@ -16,48 +16,50 @@ from .shared import (
 router = Router()
 
 
-async def cleanup_webhook_order(bot, order_id: int) -> None:
-    """Удаляем ВСЕ сообщения webhook заказа у всех менеджеров: карточку + файлы"""
-    debug_print(f"🧹 WEBHOOK CLEANUP START: order {order_id}")
+async def cleanup_webhook_order(bot, order_id: int, chat_id: int) -> None:
+    """Удаляем сообщения webhook заказа и связанные файлы только для текущего чата"""
+    debug_print(f"🧹 WEBHOOK CLEANUP START: order {order_id} chat {chat_id}")
 
-    # 1. Получаем все webhook сообщения заказа, сгруппированные по менеджерам
-    webhook_messages = get_webhook_messages(order_id)
-    total_webhook = sum(len(msgs) for msgs in webhook_messages.values())
-    debug_print(f"🧹 Found {total_webhook} webhook messages across {len(webhook_messages)} managers")
+    # 1. Получаем все webhook сообщения заказа для конкретного чата
+    webhook_messages = get_webhook_messages(order_id, chat_id)
+    total_webhook = len(webhook_messages)
+    debug_print(f"🧹 Found {total_webhook} webhook messages for chat {chat_id}")
 
-    # 2. Получаем все файловые сообщения заказа (от всех пользователей)
-    from .shared import user_order_files
-
-    # 3. Удаляем все webhook сообщения
+    # 2. Удаляем webhook сообщения
     deleted_count = 0
-    for user_id, message_ids in webhook_messages.items():
-        for msg_id in message_ids:
-            try:
-                debug_print(f"🧹 Deleting webhook message {msg_id} for user {user_id}...")
-                await bot.delete_message(user_id, msg_id)
-                deleted_count += 1
-                debug_print(f"✅ Deleted webhook message {msg_id} for user {user_id}")
-            except Exception as e:
-                debug_print(f"❌ Failed to delete webhook message {msg_id} for user {user_id}: {e}", "WARN")
+    for msg_id in webhook_messages:
+        try:
+            debug_print(f"🧹 Deleting webhook message {msg_id} for chat {chat_id}...")
+            await bot.delete_message(chat_id, msg_id)
+            deleted_count += 1
+            debug_print(f"✅ Deleted webhook message {msg_id} for chat {chat_id}")
+        except Exception as e:
+            debug_print(
+                f"❌ Failed to delete webhook message {msg_id} for chat {chat_id}: {e}",
+                "WARN",
+            )
 
-    clear_webhook_messages(order_id)
+    clear_webhook_messages(order_id, chat_id)
 
-    # 4. Удаляем файловые сообщения заказа для всех пользователей
+    # 3. Удаляем файловые сообщения заказа для текущего пользователя
     file_deleted = 0
-    for user_id in list(user_order_files.keys()):
-        file_messages = get_order_file_messages(user_id, order_id)
-        for msg_id in file_messages:
-            try:
-                debug_print(f"🧹 Deleting file message {msg_id} for user {user_id}...")
-                await bot.delete_message(user_id, msg_id)
-                file_deleted += 1
-                debug_print(f"✅ Deleted file message {msg_id} for user {user_id}")
-            except Exception as e:
-                debug_print(f"❌ Failed to delete file message {msg_id} for user {user_id}: {e}", "WARN")
-        clear_order_file_messages(user_id, order_id)
+    file_messages = get_order_file_messages(chat_id, order_id)
+    for msg_id in file_messages:
+        try:
+            debug_print(f"🧹 Deleting file message {msg_id} for user {chat_id}...")
+            await bot.delete_message(chat_id, msg_id)
+            file_deleted += 1
+            debug_print(f"✅ Deleted file message {msg_id} for user {chat_id}")
+        except Exception as e:
+            debug_print(
+                f"❌ Failed to delete file message {msg_id} for user {chat_id}: {e}",
+                "WARN",
+            )
+    clear_order_file_messages(chat_id, order_id)
 
     debug_print(
-        f"🧹 WEBHOOK CLEANUP COMPLETE: Deleted {deleted_count} webhook and {file_deleted} file messages for order {order_id}")
+        f"🧹 WEBHOOK CLEANUP COMPLETE: Deleted {deleted_count} webhook and {file_deleted} file messages for order {order_id} in chat {chat_id}"
+    )
 
 
 @router.callback_query(F.data.startswith("webhook:") & F.data.contains(":close"))
@@ -77,7 +79,8 @@ async def on_webhook_close(callback: CallbackQuery):
     # Удаляем ВСЕ сообщения этого webhook заказа
     await cleanup_webhook_order(
         callback.bot,
-        order_id
+        order_id,
+        callback.from_user.id,
     )
 
     # Отвечаем на callback (чтобы убрать "часики" в Telegram)
