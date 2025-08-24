@@ -12,6 +12,7 @@ from .shared import (
     check_permission,
     track_navigation_message,
     update_navigation_message,
+    remove_navigation_message_id,
 )
 
 router = Router()
@@ -78,6 +79,10 @@ async def on_start(msg: Message):
         await msg.delete()
     except:
         pass
+
+    # Сбрасываем сохранённое навигационное сообщение,
+    # чтобы не пытаться редактировать удалённое
+    remove_navigation_message_id(msg.from_user.id)
 
     # Пытаемся обновить существующее меню, если есть
     success = await update_navigation_message(
