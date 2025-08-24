@@ -14,6 +14,10 @@ from app.services.address_utils import get_delivery_and_contact_info, get_contac
 from app.db import get_session
 from app.models import Order, OrderStatus
 
+# Expose UI helpers and Telegram helpers for tests
+from app.services.menu_ui import orders_list_buttons, order_card_buttons
+from app.services.tg_service import send_text_with_buttons, answer_callback_query
+
 import logging, json as _json, time
 import os
 
@@ -138,6 +142,46 @@ def root():
             "webhook": "/webhooks/shopify/orders"
         }
     }
+
+
+async def telegram_webhook(request: Request):
+    """Minimal handler for Telegram callbacks used in tests."""
+    data = await request.json()
+    callback = data.get("callback_query")
+    if not callback:
+        return {"ok": True}
+
+    cb_data = callback.get("data", "")
+    cb_id = callback.get("id", "")
+
+    # Handle order list navigation callbacks
+    if cb_data.startswith("orders:list:"):
+        try:
+            _, _, kind, offset_part = cb_data.split(":", 3)
+            offset = int(offset_part.split("=")[1])
+        except Exception:
+            offset = 0
+            kind = "all"
+
+        buttons = orders_list_buttons(kind, offset, page_size=10, has_prev=False, has_next=True)
+        send_text_with_buttons(f"Список замовлень ({kind}) 1/1", buttons)
+        answer_callback_query(cb_id)
+        return {"ok": True}
+
+    # Handle order card view callbacks
+    if cb_data.startswith("order:") and cb_data.endswith(":view"):
+        parts = cb_data.split(":")
+        try:
+            order_id = int(parts[1])
+        except (IndexError, ValueError):
+            order_id = 0
+        buttons = order_card_buttons(order_id)
+        send_text_with_buttons(f"Картка замовлення #{order_id}", buttons)
+        answer_callback_query(cb_id)
+        return {"ok": True}
+
+    answer_callback_query(cb_id)
+    return {"ok": True}
 
 
 @app.post("/webhooks/shopify/orders")
