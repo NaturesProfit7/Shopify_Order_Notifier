@@ -67,9 +67,6 @@ def check_permission(user_id: int) -> bool:
 
     except Exception as e:
         debug_print(f"🔇 SILENT BLOCK: Error checking permissions for user {user_id}: {e}", "ERROR")
-        return False
-
-
 def format_phone_compact(e164: str) -> str:
     """Форматирует телефон компактно без пробелов"""
     if not e164:
