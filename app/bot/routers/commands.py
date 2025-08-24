@@ -1,5 +1,5 @@
 # app/bot/routers/commands.py - ИСПРАВЛЕННЫЕ КОМАНДЫ БЕЗ ЦИКЛИЧЕСКИХ ИМПОРТОВ
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 
@@ -298,8 +298,8 @@ async def on_help_command(msg: Message):
     track_navigation_message(msg.from_user.id, message.message_id)
 
 
-# Обработчик для всех остальных текстовых сообщений
-@router.message()
+# Обработчик для всех остальных текстовых сообщений, кроме команд
+@router.message(F.text, ~F.text.startswith('/'))
 async def on_any_message(msg: Message):
     """Обработчик любых других сообщений - ПОЛНОЕ ИГНОРИРОВАНИЕ неавторизованных"""
     # ПРОВЕРКА ПРАВ - ПОЛНОЕ ИГНОРИРОВАНИЕ
@@ -308,23 +308,21 @@ async def on_any_message(msg: Message):
 
     debug_print(f"Any message from authorized user {msg.from_user.id}: {msg.text}")
 
-    # Удаляем сообщение пользователя (если это не команда)
-    if not msg.text or not msg.text.startswith('/'):
-        try:
-            await msg.delete()
-        except:
-            pass
+    try:
+        await msg.delete()
+    except:
+        pass
 
-        # Отправляем краткое напоминание
-        reminder = await msg.answer(
-            "💬 Використовуйте /menu для управління замовленнями",
-            reply_markup=back_to_menu_keyboard()
-        )
+    # Отправляем краткое напоминание
+    reminder = await msg.answer(
+        "💬 Використовуйте /menu для управління замовленнями",
+        reply_markup=back_to_menu_keyboard()
+    )
 
-        # Удаляем напоминание через 5 секунд
-        import asyncio
-        await asyncio.sleep(5)
-        try:
-            await reminder.delete()
-        except:
-            pass
+    # Удаляем напоминание через 5 секунд
+    import asyncio
+    await asyncio.sleep(5)
+    try:
+        await reminder.delete()
+    except:
+        pass
