@@ -20,6 +20,7 @@ from .shared import (
     format_phone_compact,
     track_order_file_message,
     cleanup_order_files,
+    get_order_file_messages,
     order_card_keyboard,
     is_webhook_order_message,
     get_webhook_order_keyboard,
@@ -296,13 +297,25 @@ async def on_back_to_list(callback: CallbackQuery):
     order_id = int(callback.data.split(":")[1])
     debug_print(f"🔙 BACK TO LIST: order {order_id}, user {callback.from_user.id}")
 
+    tracked_before = get_order_file_messages(callback.from_user.id, order_id)
+    debug_print(
+        f"🧹 Cleaning up {len(tracked_before)} messages: {list(tracked_before)}")
+
     await cleanup_order_files(
         callback.bot,
         callback.message.chat.id,
         callback.from_user.id,
         order_id
     )
-    debug_print(f"✅ Cleaned up files for order {order_id}")
+
+    remaining_after = get_order_file_messages(callback.from_user.id, order_id)
+    if remaining_after:
+        debug_print(
+            f"⚠️ Remaining tracked messages after cleanup: {list(remaining_after)}",
+            "WARN"
+        )
+    else:
+        debug_print(f"✅ Cleaned up all files for order {order_id}")
 
     from .navigation import on_orders_list
     from types import SimpleNamespace
@@ -468,27 +481,21 @@ async def on_payment_info(callback: CallbackQuery):
         debug_print(f"✅ Main message sent and tracked: ID {main_msg.message_id}")
 
         # ШАГ 2: Создаем задачи для 4 копируемых сообщений
-        copy_tasks = []
-        for msg_text in copy_messages:
-            copy_tasks.append(
-                callback.bot.send_message(
-                    callback.message.chat.id,
-                    f"<code>{msg_text}</code>"
-                )
+        async def send_and_track(msg_text: str):
+            msg = await callback.bot.send_message(
+                callback.message.chat.id,
+                f"<code>{msg_text}</code>"
             )
+            track_order_file_message(callback.from_user.id, order_id, msg.message_id)
+            debug_print(
+                f"✅ Copy message sent and tracked: ID {msg.message_id} - {msg_text[:20]}...")
+            return msg
+
+        copy_tasks = [send_and_track(msg_text) for msg_text in copy_messages]
 
         # ШАГ 3: Отправляем 4 копируемых сообщения ПАРАЛЛЕЛЬНО
         # gather сохраняет порядок результатов согласно порядку задач
         copy_results = await asyncio.gather(*copy_tasks, return_exceptions=True)
-
-        # ШАГ 4: Трекаем копируемые сообщения В ТОМ ЖЕ ПОРЯДКЕ
-        for i, msg_result in enumerate(copy_results):
-            if not isinstance(msg_result, Exception):
-                track_order_file_message(callback.from_user.id, order_id, msg_result.message_id)
-                debug_print(
-                    f"✅ Copy message {i + 1}/4 sent and tracked: ID {msg_result.message_id} - {copy_messages[i][:20]}...")
-            else:
-                debug_print(f"❌ Failed to send copy message {i + 1}/4: {msg_result}", "ERROR")
 
         elapsed_time = (asyncio.get_event_loop().time() - start_time) * 1000
         debug_print(f"💳 Payment info sent successfully in {elapsed_time:.0f}ms")
@@ -497,6 +504,14 @@ async def on_payment_info(callback: CallbackQuery):
         successful_count = 1 + sum(1 for r in copy_results if not isinstance(r, Exception))
         if successful_count < 5:
             debug_print(f"⚠️ Only {successful_count}/5 messages sent successfully", "WARN")
+
+        # Проверяем, что все 5 сообщений зафиксированы
+        tracked = get_order_file_messages(callback.from_user.id, order_id)
+        if len(tracked) != 5:
+            debug_print(
+                f"⚠️ Tracking mismatch: expected 5, got {len(tracked)} messages", "WARN")
+        else:
+            debug_print(f"📌 Tracking all 5 messages for order {order_id}")
 
     except Exception as e:
         debug_print(f"❌ Error sending payment info: {e}", "ERROR")
