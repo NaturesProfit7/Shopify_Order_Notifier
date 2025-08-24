@@ -3,10 +3,12 @@ import asyncio
 import os
 from datetime import datetime, timedelta
 from typing import Optional
+
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
@@ -45,7 +47,6 @@ class TelegramBot:
         self.dp = Dispatcher(storage=storage)
 
         self.scheduler = AsyncIOScheduler(timezone="Europe/Kiev")
-        self.chat_id = os.getenv("TELEGRAM_TARGET_CHAT_ID")
 
         # Polling task
         self.polling_task: Optional[asyncio.Task] = None
@@ -141,6 +142,20 @@ class TelegramBot:
 
         return 10 <= hour < 22
 
+    async def _send_to_managers(
+        self, message: str, reply_markup: InlineKeyboardMarkup | None = None
+    ) -> None:
+        """Отправка сообщения всем разрешённым менеджерам"""
+        if not self.allowed_user_ids:
+            logger.warning("No allowed managers configured")
+            return
+
+        for uid in self.allowed_user_ids:
+            try:
+                await self.bot.send_message(uid, message, reply_markup=reply_markup)
+            except Exception as e:
+                logger.error(f"Error sending message to manager {uid}: {e}")
+
     async def _check_new_orders(self):
         """Проверка заказов в статусе NEW - каждый час (10:00-22:00)"""
         try:
@@ -154,7 +169,7 @@ class TelegramBot:
                     Order.status == OrderStatus.NEW
                 ).order_by(Order.created_at.desc()).all()
 
-                if not new_orders or not self.chat_id:
+                if not new_orders:
                     logger.info("No new orders to remind about")
                     return
 
@@ -204,12 +219,10 @@ class TelegramBot:
                     )
                 ]])
 
-                await self.bot.send_message(
-                    self.chat_id,
-                    message,
-                    reply_markup=keyboard
+                await self._send_to_managers(message, keyboard)
+                logger.info(
+                    f"Sent hourly NEW orders notification: {len(new_orders)} orders"
                 )
-                logger.info(f"Sent hourly NEW orders notification: {len(new_orders)} orders")
 
         except Exception as e:
             logger.error(f"Error checking new orders: {e}", exc_info=True)
@@ -222,7 +235,7 @@ class TelegramBot:
                     Order.status == OrderStatus.WAITING_PAYMENT
                 ).order_by(Order.updated_at.desc()).all()
 
-                if not waiting_orders or not self.chat_id:
+                if not waiting_orders:
                     logger.info("No payment reminders needed")
                     return
 
@@ -280,12 +293,10 @@ class TelegramBot:
                     )
                 ]])
 
-                await self.bot.send_message(
-                    self.chat_id,
-                    message,
-                    reply_markup=keyboard
+                await self._send_to_managers(message, keyboard)
+                logger.info(
+                    f"Sent daily PAYMENT reminders: {len(waiting_orders)} orders"
                 )
-                logger.info(f"Sent daily PAYMENT reminders: {len(waiting_orders)} orders")
 
         except Exception as e:
             logger.error(f"Error checking payment reminders: {e}", exc_info=True)
@@ -324,13 +335,8 @@ class TelegramBot:
                             )
                         ]])
 
-                        if self.chat_id:
-                            await self.bot.send_message(
-                                self.chat_id,
-                                message,
-                                reply_markup=keyboard
-                            )
-                            logger.info(f"Sent reminder for order {order_no}")
+                        await self._send_to_managers(message, keyboard)
+                        logger.info(f"Sent reminder for order {order_no}")
 
                         order.reminder_at = None
 

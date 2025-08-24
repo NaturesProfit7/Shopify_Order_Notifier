@@ -38,16 +38,11 @@ async def test_hourly_reminder(message: Message):
         # Восстанавливаем оригинальный метод
         bot_instance._is_working_hours = original_method
 
-        # Отправляем подтверждение
-        confirmation = await message.answer("✅ Тест ежегодного напоминания выполнен (игнорирование времени)")
-
-        # Удаляем подтверждение через 3 секунды
-        import asyncio
-        await asyncio.sleep(3)
-        try:
-            await confirmation.delete()
-        except:
-            pass
+        # Отправляем подтверждение менеджерам без использования chat_id
+        await bot_instance._send_to_managers(
+            "✅ Тест ежегодного напоминания выполнен (игнорирование времени)",
+            None,
+        )
 
     except Exception as e:
         debug_print(f"Error in hourly test: {e}", "ERROR")
@@ -75,16 +70,11 @@ async def test_daily_reminder(message: Message):
 
         await bot_instance._check_payment_reminders()
 
-        # Отправляем подтверждение
-        confirmation = await message.answer("✅ Тест ежедневного напоминания выполнен")
-
-        # Удаляем подтверждение через 3 секунды
-        import asyncio
-        await asyncio.sleep(3)
-        try:
-            await confirmation.delete()
-        except:
-            pass
+        # Отправляем подтверждение менеджерам
+        await bot_instance._send_to_managers(
+            "✅ Тест ежедневного напоминания выполнен",
+            None,
+        )
 
     except Exception as e:
         debug_print(f"Error in daily test: {e}", "ERROR")
@@ -112,16 +102,11 @@ async def test_individual_reminder(message: Message):
 
         await bot_instance._check_reminders()
 
-        # Отправляем подтверждение
-        confirmation = await message.answer("✅ Тест індивідуальних нагадувань виконан")
-
-        # Удаляем подтверждение через 3 секунды
-        import asyncio
-        await asyncio.sleep(3)
-        try:
-            await confirmation.delete()
-        except:
-            pass
+        # Отправляем подтверждение менеджерам
+        await bot_instance._send_to_managers(
+            "✅ Тест індивідуальних нагадувань виконан",
+            None,
+        )
 
     except Exception as e:
         debug_print(f"Error in reminder test: {e}", "ERROR")
