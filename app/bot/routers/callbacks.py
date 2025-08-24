@@ -14,6 +14,7 @@ from app.bot.services.message_builder import (
     get_status_emoji,
     get_status_text,
     build_order_message,
+    DIVIDER,
 )
 from app.services.pdf_service import build_order_pdf
 from app.services.vcf_service import build_contact_vcf
@@ -129,7 +130,7 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
     phone = format_phone_compact(order.customer_phone_e164)
 
     message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} {status_text}
-━━━━━━━━━━━━━━━━━━━━━━
+{DIVIDER}
 👤 {customer_name}
 📱 {phone}"""
 
@@ -165,7 +166,7 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
         if total:
             message += f"\n💰 <b>Сума:</b> {total} {currency}"
 
-    message += "\n━━━━━━━━━━━━━━━━━━━━━━"
+    message += f"\n{DIVIDER}"
 
     # Дополнительная информация
     if order.comment:

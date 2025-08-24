@@ -334,7 +334,7 @@ async def shopify_webhook(request: Request):
                 raise HTTPException(status_code=500, detail="Database error")
 
             # WEBHOOK заказ: отправляется ОТДЕЛЬНО (не как navigation!)
-            from app.bot.services.message_builder import get_status_emoji
+            from app.bot.services.message_builder import get_status_emoji, DIVIDER
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
             # Строим сообщение
@@ -344,7 +344,7 @@ async def shopify_webhook(request: Request):
             phone = order_obj.customer_phone_e164 if order_obj.customer_phone_e164 else "Не вказано"
 
             main_message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} Новий
-━━━━━━━━━━━━━━━━━━━━━━
+{DIVIDER}
 👤 {customer_name}
 📱 {phone}"""
 
@@ -369,7 +369,7 @@ async def shopify_webhook(request: Request):
                 if total:
                     main_message += f"\n💰 <b>Сума:</b> {total} {currency}"
 
-            main_message += "\n━━━━━━━━━━━━━━━━━━━━━━"
+            main_message += f"\n{DIVIDER}"
 
             # ПРОСТАЯ клавиатура с кнопкой "Закрити"
             webhook_keyboard = InlineKeyboardMarkup(inline_keyboard=[

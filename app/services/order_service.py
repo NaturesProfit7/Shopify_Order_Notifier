@@ -3,6 +3,7 @@
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from app.models import Order, OrderStatus
+from app.bot.services.message_builder import DIVIDER
 
 
 def build_enhanced_order_message(order: Order, order_data: dict) -> str:
@@ -17,14 +18,14 @@ def build_enhanced_order_message(order: Order, order_data: dict) -> str:
     phone = order.customer_phone_e164 if order.customer_phone_e164 else "Не вказано"
 
     message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} Новий
-━━━━━━━━━━━━━━━━━━━━━━
+{DIVIDER}
 👤 {customer_name}
 📱 {phone}"""
 
     # Товары
     items = order_data.get("line_items", [])
     if items:
-        message += "\n━━━━━━━━━━━━━━━━━━━━━━\n🛍 <b>Товари:</b>"
+        message += f"\n{DIVIDER}\n🛍 <b>Товари:</b>"
         for item in items[:3]:  # Показываем первые 3
             title = item.get("title", "")
             qty = item.get("quantity", 0)

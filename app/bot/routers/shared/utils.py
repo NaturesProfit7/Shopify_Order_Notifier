@@ -5,6 +5,7 @@ import os
 from typing import TYPE_CHECKING
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
+from app.bot.services.message_builder import DIVIDER
 
 if TYPE_CHECKING:
     from app.models import Order
@@ -83,7 +84,7 @@ def is_coming_from_order_card(message) -> bool:
     text = message.text
     return (
             "Замовлення #" in text and
-            "━━━━━━━━━━━━━━━━━━━━━━" in text and
+            DIVIDER in text and
             ("📱" in text or "👤" in text)
     )
 
