@@ -330,12 +330,26 @@ async def on_resend_file(callback: CallbackQuery):
 
     debug_print(f"🎯 RESEND: {file_type} for order {order_id} from authorized user {callback.from_user.id}")
 
+    # КРИТИЧНО: Сразу отвечаем на callback чтобы избежать timeout
+    try:
+        await callback.answer(f"⏳ Генерую {file_type.upper()}...")
+    except Exception as e:
+        debug_print(f"Failed to answer callback: {e}", "WARNING")
+        # Продолжаем работу даже если не смогли ответить на callback
+
     await cleanup_order_files(callback.bot, callback.message.chat.id, callback.from_user.id, order_id)
 
     with get_session() as session:
         order = session.get(Order, order_id)
         if not order or not order.raw_json:
-            await callback.answer("❌ Дані замовлення не знайдено", show_alert=True)
+            # Отправляем сообщение об ошибке в чат, т.к. callback уже отвечен
+            try:
+                await callback.bot.send_message(
+                    callback.message.chat.id,
+                    "❌ Дані замовлення не знайдено"
+                )
+            except Exception:
+                pass
             return
 
         try:
@@ -362,7 +376,7 @@ async def on_resend_file(callback: CallbackQuery):
                 )
 
                 track_order_file_message(callback.from_user.id, order_id, pdf_msg.message_id)
-                await callback.answer("✅ PDF відправлено")
+                debug_print(f"✅ PDF sent successfully for order {order_id}")
 
             elif file_type == "vcf":
                 vcf_bytes, vcf_filename = build_contact_vcf(
@@ -384,11 +398,18 @@ async def on_resend_file(callback: CallbackQuery):
                 )
 
                 track_order_file_message(callback.from_user.id, order_id, vcf_msg.message_id)
-                await callback.answer("✅ VCF відправлено")
+                debug_print(f"✅ VCF sent successfully for order {order_id}")
 
         except Exception as e:
             debug_print(f"Error sending {file_type}: {e}", "ERROR")
-            await callback.answer(f"❌ Помилка: {str(e)}", show_alert=True)
+            # Отправляем сообщение об ошибке в чат, т.к. callback уже отвечен
+            try:
+                await callback.bot.send_message(
+                    callback.message.chat.id,
+                    f"❌ Помилка при генерації {file_type.upper()}: {str(e)}"
+                )
+            except Exception:
+                pass
 
 
 @router.callback_query(F.data.contains(":payment"))
