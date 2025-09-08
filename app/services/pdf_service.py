@@ -123,6 +123,12 @@ def build_order_pdf(order: dict) -> Tuple[bytes, str]:
     - Если адреса одинаковые → используем shipping
     - Если адреса разные → billing для доставки, shipping для контакта
     """
+    import time
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    start_time = time.time()
+    order_id = order.get('id', 'unknown')
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     width, height = A4
@@ -269,5 +275,8 @@ def build_order_pdf(order: dict) -> Tuple[bytes, str]:
     c.save()
     pdf_bytes = buf.getvalue()
     buf.close()
+    
+    generation_time = time.time() - start_time
+    logger.info(f"PDF generation completed in {generation_time:.2f}s for order {order_id}")
 
     return pdf_bytes, f"order_#{order_no}.pdf"

@@ -5,8 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="WORK LETS GO">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/bot/routers/orders.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/bot/routers/orders.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/pdf_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/pdf_service.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -309,7 +309,15 @@
       <option name="project" value="LOCAL" />
       <updated>1755976216762</updated>
     </task>
-    <option name="localTasksCounter" value="28" />
+    <task id="LOCAL-00028" summary="WORK LETS GO">
+      <option name="closed" value="true" />
+      <created>1757354508556</created>
+      <option name="number" value="00028" />
+      <option name="presentableId" value="LOCAL-00028" />
+      <option name="project" value="LOCAL" />
+      <updated>1757354508557</updated>
+    </task>
+    <option name="localTasksCounter" value="29" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

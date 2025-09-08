@@ -354,12 +354,20 @@ async def on_resend_file(callback: CallbackQuery):
 
         try:
             if file_type == "pdf":
+                import time
+                start_time = time.time()
+                
+                debug_print(f"⏳ Starting PDF generation for order {order_id}")
                 pdf_bytes, pdf_filename = build_order_pdf(order.raw_json)
+                pdf_generation_time = time.time() - start_time
+                debug_print(f"📄 PDF generated in {pdf_generation_time:.2f}s for order {order_id}")
+                
                 pdf_file = BufferedInputFile(pdf_bytes, pdf_filename)
 
                 from app.services.message_templates import render_simple_confirm_with_contact
                 from app.services.address_utils import get_delivery_and_contact_info, get_contact_name
 
+                template_start = time.time()
                 _, contact_info = get_delivery_and_contact_info(order.raw_json)
                 contact_first_name, contact_last_name = get_contact_name(contact_info)
 
@@ -368,37 +376,54 @@ async def on_resend_file(callback: CallbackQuery):
                     contact_first_name,
                     contact_last_name
                 )
+                template_time = time.time() - template_start
+                debug_print(f"📝 Template rendered in {template_time:.2f}s for order {order_id}")
 
+                send_start = time.time()
                 pdf_msg = await callback.bot.send_document(
                     chat_id=callback.message.chat.id,
                     document=pdf_file,
                     caption=client_message
                 )
+                send_time = time.time() - send_start
+                debug_print(f"📤 PDF sent in {send_time:.2f}s for order {order_id}")
 
                 track_order_file_message(callback.from_user.id, order_id, pdf_msg.message_id)
-                debug_print(f"✅ PDF sent successfully for order {order_id}")
+                total_time = time.time() - start_time
+                debug_print(f"✅ PDF completed in {total_time:.2f}s total for order {order_id}")
 
             elif file_type == "vcf":
+                import time
+                start_time = time.time()
+                
+                debug_print(f"⏳ Starting VCF generation for order {order_id}")
                 vcf_bytes, vcf_filename = build_contact_vcf(
                     first_name=order.customer_first_name or "",
                     last_name=order.customer_last_name or "",
                     order_id=str(order.order_number or order.id),
                     phone_e164=order.customer_phone_e164
                 )
+                vcf_generation_time = time.time() - start_time
+                debug_print(f"📱 VCF generated in {vcf_generation_time:.2f}s for order {order_id}")
+                
                 vcf_file = BufferedInputFile(vcf_bytes, vcf_filename)
 
                 caption = f"📱 Контакт клієнта • #{order.order_number or order.id}"
                 if order.customer_phone_e164:
                     caption += f" • {format_phone_compact(order.customer_phone_e164)}"
 
+                send_start = time.time()
                 vcf_msg = await callback.bot.send_document(
                     chat_id=callback.message.chat.id,
                     document=vcf_file,
                     caption=caption
                 )
+                send_time = time.time() - send_start
+                debug_print(f"📤 VCF sent in {send_time:.2f}s for order {order_id}")
 
                 track_order_file_message(callback.from_user.id, order_id, vcf_msg.message_id)
-                debug_print(f"✅ VCF sent successfully for order {order_id}")
+                total_time = time.time() - start_time
+                debug_print(f"✅ VCF completed in {total_time:.2f}s total for order {order_id}")
 
         except Exception as e:
             debug_print(f"Error sending {file_type}: {e}", "ERROR")
