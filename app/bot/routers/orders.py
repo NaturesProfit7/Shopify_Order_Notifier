@@ -380,13 +380,26 @@ async def on_resend_file(callback: CallbackQuery):
                 debug_print(f"📝 Template rendered in {template_time:.2f}s for order {order_id}")
 
                 send_start = time.time()
-                pdf_msg = await callback.bot.send_document(
-                    chat_id=callback.message.chat.id,
-                    document=pdf_file,
-                    caption=client_message
-                )
-                send_time = time.time() - send_start
-                debug_print(f"📤 PDF sent in {send_time:.2f}s for order {order_id}")
+                # Retry логика для отправки PDF через медленное соединение
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        pdf_msg = await callback.bot.send_document(
+                            chat_id=callback.message.chat.id,
+                            document=pdf_file,
+                            caption=client_message,
+                            request_timeout=60  # 60 секунд таймаут для отправки
+                        )
+                        send_time = time.time() - send_start
+                        debug_print(f"📤 PDF sent in {send_time:.2f}s for order {order_id} (attempt {attempt + 1})")
+                        break
+                    except Exception as send_error:
+                        debug_print(f"⚠️ PDF send attempt {attempt + 1} failed: {send_error}")
+                        if attempt == max_retries - 1:
+                            raise  # Последняя попытка - пробрасываем ошибку
+                        await asyncio.sleep(2)  # Пауза перед повтором
+                        # Пересоздаем файл для повторной отправки
+                        pdf_file = BufferedInputFile(pdf_bytes, pdf_filename)
 
                 track_order_file_message(callback.from_user.id, order_id, pdf_msg.message_id)
                 total_time = time.time() - start_time
@@ -413,13 +426,26 @@ async def on_resend_file(callback: CallbackQuery):
                     caption += f" • {format_phone_compact(order.customer_phone_e164)}"
 
                 send_start = time.time()
-                vcf_msg = await callback.bot.send_document(
-                    chat_id=callback.message.chat.id,
-                    document=vcf_file,
-                    caption=caption
-                )
-                send_time = time.time() - send_start
-                debug_print(f"📤 VCF sent in {send_time:.2f}s for order {order_id}")
+                # Retry логика для отправки VCF через медленное соединение  
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        vcf_msg = await callback.bot.send_document(
+                            chat_id=callback.message.chat.id,
+                            document=vcf_file,
+                            caption=caption,
+                            request_timeout=60  # 60 секунд таймаут для отправки
+                        )
+                        send_time = time.time() - send_start
+                        debug_print(f"📤 VCF sent in {send_time:.2f}s for order {order_id} (attempt {attempt + 1})")
+                        break
+                    except Exception as send_error:
+                        debug_print(f"⚠️ VCF send attempt {attempt + 1} failed: {send_error}")
+                        if attempt == max_retries - 1:
+                            raise  # Последняя попытка - пробрасываем ошибку
+                        await asyncio.sleep(2)  # Пауза перед повтором
+                        # Пересоздаем файл для повторной отправки
+                        vcf_file = BufferedInputFile(vcf_bytes, vcf_filename)
 
                 track_order_file_message(callback.from_user.id, order_id, vcf_msg.message_id)
                 total_time = time.time() - start_time

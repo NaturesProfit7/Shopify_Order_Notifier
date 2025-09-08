@@ -130,7 +130,8 @@ def build_order_pdf(order: dict) -> Tuple[bytes, str]:
     start_time = time.time()
     order_id = order.get('id', 'unknown')
     buf = BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
+    # Создаем PDF с минимальными настройками для уменьшения размера
+    c = canvas.Canvas(buf, pagesize=A4, compress=1)  # Включаем сжатие
     width, height = A4
     has_fonts = _register_fonts()
 

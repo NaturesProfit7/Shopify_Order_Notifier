@@ -40,7 +40,27 @@ class TelegramBot:
         if not token:
             raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
 
-        self.bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        # Настраиваем таймауты и альтернативные серверы для работы с проблемной сетью
+        from aiogram.client.session.aiohttp import AiohttpSession
+        import aiohttp
+        
+        # Создаем custom connector с увеличенными таймаутами
+        timeout = aiohttp.ClientTimeout(
+            total=120,  # 2 минуты общий таймаут
+            connect=30,  # 30 секунд на соединение
+            sock_read=90  # 90 секунд на чтение
+        )
+        
+        session = AiohttpSession(
+            timeout=timeout,
+            api_server="https://api.telegram.org"  # Явно указываем сервер
+        )
+        
+        self.bot = Bot(
+            token=token, 
+            session=session,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        )
 
         # ИСПОЛЬЗУЕМ MemoryStorage для FSM
         storage = MemoryStorage()
