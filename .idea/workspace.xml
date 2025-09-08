@@ -4,10 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="WORK LETS GO">
-      <change beforePath="$PROJECT_DIR$/app/bot/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/bot/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/bot/routers/orders.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/bot/routers/orders.py" afterDir="false" />
-    </list>
+    <list default="true" id="9c8a888d-f324-4784-afa5-8dabc0391b93" name="Changes" comment="WORK LETS GO" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -325,7 +322,15 @@
       <option name="project" value="LOCAL" />
       <updated>1757354842766</updated>
     </task>
-    <option name="localTasksCounter" value="30" />
+    <task id="LOCAL-00030" summary="WORK LETS GO">
+      <option name="closed" value="true" />
+      <created>1757355431460</created>
+      <option name="number" value="00030" />
+      <option name="presentableId" value="LOCAL-00030" />
+      <option name="project" value="LOCAL" />
+      <updated>1757355431460</updated>
+    </task>
+    <option name="localTasksCounter" value="31" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
