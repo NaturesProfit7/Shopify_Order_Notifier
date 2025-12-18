@@ -82,26 +82,11 @@ def _wrap_text(c: canvas.Canvas, text: str, x: float, y: float, max_width: float
 
 def _draw_properties(c: canvas.Canvas, props: List[Dict[str, Any]], x: float, y: float,
                      usable_w: float, font: str, size: int, step: float, bullet="• ") -> float:
-    """Список свойств товара с діаметром медальки в начале (если есть)."""
-    # Сначала ищем и выводим діаметр медальки
-    diameter = None
-    for p in props or []:
-        name = str(p.get("name") or "").strip()
-        value = str(p.get("value") or "").strip()
-        if name.lower() == "діаметр медальки":
-            diameter = value
-            if diameter:
-                text = f"{bullet}Діаметр медальки: {diameter}"
-                y = _wrap_text(c, text, x, y, usable_w, font, size, step)
-            break
-
-    # Затем выводим остальные свойства (пропуская те, что начинаются с '_' и діаметр)
+    """Список свойств товара (пропуская имена, начинающиеся с '_')."""
     for p in props or []:
         name = str(p.get("name") or "").strip()
         value = str(p.get("value") or "").strip()
         if not name or name.startswith("_"):
-            continue
-        if name.lower() == "діаметр медальки":
             continue
         text = f"{bullet}{name}: {value}" if value else f"{bullet}{name}"
         y = _wrap_text(c, text, x, y, usable_w, font, size, step)
@@ -263,6 +248,14 @@ def build_order_pdf(order: dict) -> Tuple[bytes, str]:
         c.drawRightString(col_sum_x, y + 5.5 * mm, f"{total:,.2f}".replace(",", " "))
 
         ensure_space()
+
+        # Выводим размер из variant_title если есть
+        variant_title = str(it.get("variant_title") or "").strip()
+        if variant_title:
+            y -= 1.5 * mm
+            text = f"• Розмір: {variant_title}"
+            y = _wrap_text(c, text, col_name_x + 6 * mm, y, right - (col_name_x + 6 * mm), text_font, 9, 5 * mm)
+            ensure_space()
 
         props = it.get("properties") or []
         if props:
