@@ -82,11 +82,26 @@ def _wrap_text(c: canvas.Canvas, text: str, x: float, y: float, max_width: float
 
 def _draw_properties(c: canvas.Canvas, props: List[Dict[str, Any]], x: float, y: float,
                      usable_w: float, font: str, size: int, step: float, bullet="• ") -> float:
-    """Список свойств товара (пропуская имена, начинающиеся с '_')."""
+    """Список свойств товара с діаметром медальки в начале (если есть)."""
+    # Сначала ищем и выводим діаметр медальки
+    diameter = None
+    for p in props or []:
+        name = str(p.get("name") or "").strip()
+        value = str(p.get("value") or "").strip()
+        if name.lower() == "діаметр медальки":
+            diameter = value
+            if diameter:
+                text = f"{bullet}Діаметр медальки: {diameter}"
+                y = _wrap_text(c, text, x, y, usable_w, font, size, step)
+            break
+
+    # Затем выводим остальные свойства (пропуская те, что начинаются с '_' и діаметр)
     for p in props or []:
         name = str(p.get("name") or "").strip()
         value = str(p.get("value") or "").strip()
         if not name or name.startswith("_"):
+            continue
+        if name.lower() == "діаметр медальки":
             continue
         text = f"{bullet}{name}: {value}" if value else f"{bullet}{name}"
         y = _wrap_text(c, text, x, y, usable_w, font, size, step)

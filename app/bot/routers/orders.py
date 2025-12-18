@@ -509,7 +509,7 @@ async def on_payment_info(callback: CallbackQuery):
 🛍 <b>Сума замовлення складає - {order_total} {currency}</b>
 
 Оплату можна здійснити на:
-<b>ФОП Нитяжук Катерина Сергіївна</b>
+<b>ФОП Комарницька Катерина Сергіївна</b>
 <code>UA613220010000026004340089782</code>
 <b>ЕДРПОУ:</b> 3577508940
 <b>Призначення:</b> Оплата за товар 
@@ -518,7 +518,7 @@ async def on_payment_info(callback: CallbackQuery):
 
     # Копируемые сообщения в строгом порядке
     copy_messages = [
-        "ФОП Нитяжук Катерина Сергіївна",
+        "ФОП Комарницька Катерина Сергіївна",
         "UA613220010000026004340089782",
         "3577508940",
         "Оплата за товар",
@@ -551,11 +551,18 @@ async def on_payment_info(callback: CallbackQuery):
             await send_and_track(msg_text)
             await asyncio.sleep(PAYMENT_MESSAGE_DELAY)
 
+        # Отправляем новое сообщение о выборе предоплаты
+        payment_choice_msg = await callback.bot.send_message(
+            callback.message.chat.id,
+            "Вам буде зручніше передоплата 200 грн чи повна оплата?"
+        )
+        track_order_file_message(callback.from_user.id, order_id, payment_choice_msg.message_id)
+
         elapsed_time = (asyncio.get_event_loop().time() - start_time) * 1000
         debug_print(f"💳 Payment info sent successfully in {elapsed_time:.0f}ms")
 
         tracked = get_order_file_messages(callback.from_user.id, order_id)
-        assert len(tracked) == 5
+        assert len(tracked) == 6
         debug_print(f"📌 Tracking all {len(tracked)} messages for order {order_id}")
 
     except Exception as e:
