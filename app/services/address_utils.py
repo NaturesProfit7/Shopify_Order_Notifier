@@ -62,9 +62,13 @@ def get_delivery_and_contact_info(order: Dict[str, Any]) -> Tuple[Dict[str, Any]
     return billing, shipping
 
 
-def build_delivery_address_text(delivery_address: Dict[str, Any]) -> str:
+def build_delivery_address_text(delivery_address: Dict[str, Any], email: Optional[str] = None) -> str:
     """
     Строит текст адреса доставки для PDF.
+
+    Args:
+        delivery_address: Словарь с данными адреса доставки
+        email: Email клиента (берется из order.email)
     """
     if not delivery_address:
         return "—"
@@ -94,6 +98,10 @@ def build_delivery_address_text(delivery_address: Dict[str, Any]) -> str:
             lines.append(pretty_ua_phone(phone_e164))
         else:
             lines.append(phone)
+
+    # Email клиента (под телефоном)
+    email_value = (email or '').strip()
+    lines.append(email_value if email_value else "—")
 
     return '\n'.join(lines) if lines else "—"
 

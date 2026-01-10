@@ -142,7 +142,9 @@ def build_order_pdf(order: dict) -> Tuple[bytes, str]:
 
     # НОВАЯ ЛОГИКА: определяем адрес доставки
     delivery_address, contact_info = get_delivery_and_contact_info(order)
-    delivery_text = build_delivery_address_text(delivery_address)
+    # Получаем email клиента из заказа
+    customer_email = order.get('email') or order.get('contact_email') or ''
+    delivery_text = build_delivery_address_text(delivery_address, email=customer_email)
 
     # Определяем сценарий для информации
     shipping = order.get('shipping_address', {})
