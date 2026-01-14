@@ -356,9 +356,13 @@ async def on_resend_file(callback: CallbackQuery):
             if file_type == "pdf":
                 import time
                 start_time = time.time()
-                
+
                 debug_print(f"⏳ Starting PDF generation for order {order_id}")
-                pdf_bytes, pdf_filename = build_order_pdf(order.raw_json)
+                # Запускаем CPU-bound операцию в отдельном потоке чтобы не блокировать event loop
+                loop = asyncio.get_event_loop()
+                pdf_bytes, pdf_filename = await loop.run_in_executor(
+                    None, build_order_pdf, order.raw_json
+                )
                 pdf_generation_time = time.time() - start_time
                 debug_print(f"📄 PDF generated in {pdf_generation_time:.2f}s for order {order_id}")
                 
@@ -407,15 +411,20 @@ async def on_resend_file(callback: CallbackQuery):
 
             elif file_type == "vcf":
                 import time
+                from functools import partial
                 start_time = time.time()
-                
+
                 debug_print(f"⏳ Starting VCF generation for order {order_id}")
-                vcf_bytes, vcf_filename = build_contact_vcf(
+                # Запускаем в отдельном потоке чтобы не блокировать event loop
+                loop = asyncio.get_event_loop()
+                vcf_func = partial(
+                    build_contact_vcf,
                     first_name=order.customer_first_name or "",
                     last_name=order.customer_last_name or "",
                     order_id=str(order.order_number or order.id),
                     phone_e164=order.customer_phone_e164
                 )
+                vcf_bytes, vcf_filename = await loop.run_in_executor(None, vcf_func)
                 vcf_generation_time = time.time() - start_time
                 debug_print(f"📱 VCF generated in {vcf_generation_time:.2f}s for order {order_id}")
                 
