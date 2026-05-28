@@ -53,6 +53,13 @@ logs/
 .vscode/
 *.code-workspace
 
+# Server docs with sensitive info (IPs, SSH access)
+SERVER_INFO.md
+SERVER_MAINTENANCE.md
+
+# Internal project docs
+PROJECT_OVERVIEW.md
+
 # OS junk
 .DS_Store
 Thumbs.db
