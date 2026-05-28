@@ -1,6 +1,7 @@
 # app/bot/routers/management.py - ПОЛНОЕ ИГНОРИРОВАНИЕ НЕАВТОРИЗОВАННЫХ
 """Роутер для управления заказами: комментарии, напоминания"""
 
+import asyncio
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
@@ -197,3 +198,71 @@ async def handle_reminder_time(callback: CallbackQuery):
             time_text = "завтра"
 
         await callback.answer(f"✅ Нагадування встановлено через {time_text}")
+
+
+@router.callback_query(F.data.contains(":create_crm"))
+async def on_create_crm(callback: CallbackQuery):
+    """Кнопка 'Створити в CRM' — створює замовлення в keyCRM."""
+    if not check_permission(callback.from_user.id):
+        return
+
+    order_id = int(callback.data.split(":")[1])
+
+    with get_session() as session:
+        order = session.get(Order, order_id)
+        if not order:
+            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
+            return
+        if (order.raw_json or {}).get("_crm_order_id"):
+            await callback.answer("⚠️ Вже створено в CRM", show_alert=True)
+            return
+        order_display = order.order_number or order_id
+        # Відв'язуємо від сесії: scalar-атрибути зберігаються,
+        # але об'єкт більше не прив'язаний до сесії — безпечно передавати в потік
+        session.expunge(order)
+
+    await callback.answer("⏳ Створюю замовлення в CRM...")
+
+    try:
+        from app.services.keycrm_service import create_crm_order
+        loop = asyncio.get_event_loop()
+
+        # order — detached ORM-об'єкт, всі потрібні атрибути вже завантажені
+        result = await loop.run_in_executor(None, create_crm_order, order)
+        crm_id = result["id"]
+        crm_url = result["url"]
+
+        # Зберігаємо CRM ID і будуємо нову клавіатуру всередині сесії (без await)
+        new_keyboard = None
+        with get_session() as session:
+            fresh_order = session.get(Order, order_id)
+            if fresh_order:
+                fresh_order.raw_json = {**(fresh_order.raw_json or {}), "_crm_order_id": crm_id}
+                session.commit()
+                try:
+                    from .orders import get_correct_keyboard
+                    new_keyboard = get_correct_keyboard(fresh_order, callback.message)
+                except Exception as e:
+                    debug_print(f"Failed to build CRM keyboard: {e}", "WARN")
+
+        # await-виклики — поза межами сесії
+        if new_keyboard:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=new_keyboard)
+            except Exception as e:
+                debug_print(f"Failed to update keyboard after CRM creation: {e}", "WARN")
+
+        await callback.bot.send_message(
+            callback.message.chat.id,
+            f"✅ Замовлення <b>#{order_display}</b> створено в CRM\n"
+            f"🔗 <a href='{crm_url}'>Відкрити в keyCRM</a>",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    except Exception as e:
+        debug_print(f"CRM order creation failed for order {order_id}: {e}", "ERROR")
+        await callback.bot.send_message(
+            callback.message.chat.id,
+            f"❌ Помилка створення в CRM: {e}"
+        )

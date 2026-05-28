@@ -149,6 +149,18 @@ def get_webhook_order_keyboard(order: 'Order') -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order.id}:reminder")
         ])
 
+    # CRM-кнопка для оплачених замовлень
+    if order.status == OrderStatus.PAID:
+        crm_id = (order.raw_json or {}).get("_crm_order_id")
+        if crm_id:
+            buttons.append([
+                InlineKeyboardButton(text="✅ В CRM", callback_data="noop")
+            ])
+        else:
+            buttons.append([
+                InlineKeyboardButton(text="🏪 Створити в CRM", callback_data=f"order:{order.id}:create_crm")
+            ])
+
     # ВСЕГДА кнопка "Закрити" для webhook заказов
     buttons.append([
         InlineKeyboardButton(text="❌ Закрити", callback_data=f"webhook:{order.id}:close")

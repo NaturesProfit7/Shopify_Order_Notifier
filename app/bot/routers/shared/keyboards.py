@@ -93,6 +93,18 @@ def order_card_keyboard(order: Order) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="💳 Реквізити", callback_data=f"order:{order.id}:payment")
     ])
 
+    # CRM-кнопка для оплачених замовлень
+    if order.status == OrderStatus.PAID:
+        crm_id = (order.raw_json or {}).get("_crm_order_id")
+        if crm_id:
+            buttons.append([
+                InlineKeyboardButton(text="✅ В CRM", callback_data="noop")
+            ])
+        else:
+            buttons.append([
+                InlineKeyboardButton(text="🏪 Створити в CRM", callback_data=f"order:{order.id}:create_crm")
+            ])
+
     # Дополнительные действия
     if order.status in [OrderStatus.NEW, OrderStatus.WAITING_PAYMENT]:
         buttons.append([
