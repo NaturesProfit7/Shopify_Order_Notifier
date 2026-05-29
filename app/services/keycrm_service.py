@@ -48,7 +48,7 @@ def create_crm_order(order) -> dict:
             "phone": order.customer_phone_e164 or None,
             "email": email,
         },
-        "manager_comment": _format_manager_comment(raw),
+        "manager_comment": _format_manager_comment(raw, order.comment),
     }
 
     response = _session.post(f"{KEYCRM_BASE_URL}/order", json=body, timeout=30)
@@ -62,7 +62,7 @@ def create_crm_order(order) -> dict:
 # Manager comment builder
 # ---------------------------------------------------------------------------
 
-def _format_manager_comment(raw: dict) -> str:
+def _format_manager_comment(raw: dict, tg_comment: str | None = None) -> str:
     parts = []
 
     order_number = raw.get("order_number") or (raw.get("name") or "").lstrip("#")
@@ -121,6 +121,12 @@ def _format_manager_comment(raw: dict) -> str:
     if phones_section:
         parts.append("")
         parts.append(phones_section)
+
+    if tg_comment and tg_comment.strip():
+        parts.append("")
+        parts.append("❗️❗️❗️")
+        parts.append("")
+        parts.append(tg_comment.strip())
 
     return "\n".join(parts)
 

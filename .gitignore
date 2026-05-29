@@ -59,6 +59,7 @@ SERVER_MAINTENANCE.md
 
 # Internal project docs
 PROJECT_OVERVIEW.md
+docs/review-*.md
 
 # OS junk
 .DS_Store
