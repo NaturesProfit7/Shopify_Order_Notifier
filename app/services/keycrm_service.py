@@ -150,6 +150,9 @@ def _format_manager_comment(raw: dict, tg_comment: str | None = None) -> str:
         parts.append(title)
         parts.append(f"кількість х{qty}")
         parts.append("")
+        variant_title = str(item.get("variant_title") or "").strip()
+        if variant_title:
+            parts.append(f"• Розмір: {variant_title}")
         for prop in item.get("properties") or []:
             name = (prop.get("name") or "").strip()
             value = (prop.get("value") or "").strip()

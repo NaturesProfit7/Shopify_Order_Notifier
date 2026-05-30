@@ -82,3 +82,4 @@ storage/*.db
 
 # (Если когда-нибудь добавишь фронт)
 node_modules/
+docs/*.pdf
