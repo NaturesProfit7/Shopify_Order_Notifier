@@ -142,13 +142,6 @@ def get_webhook_order_keyboard(order: 'Order') -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="💳 Реквізити", callback_data=f"order:{order.id}:payment")
     ])
 
-    # Дополнительные действия (для активных заказов)
-    if order.status in [OrderStatus.NEW, OrderStatus.WAITING_PAYMENT]:
-        buttons.append([
-            InlineKeyboardButton(text="💬 Коментар", callback_data=f"order:{order.id}:comment"),
-            InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order.id}:reminder")
-        ])
-
     # Кнопка покупця — для всіх статусів
     buyer_id = (order.raw_json or {}).get("_crm_buyer_id")
     if buyer_id:
@@ -171,6 +164,13 @@ def get_webhook_order_keyboard(order: 'Order') -> InlineKeyboardMarkup:
             buttons.append([
                 InlineKeyboardButton(text="🏪 Створити замовлення", callback_data=f"order:{order.id}:create_crm")
             ])
+
+    # Дополнительные действия (для активных заказов)
+    if order.status in [OrderStatus.NEW, OrderStatus.WAITING_PAYMENT]:
+        buttons.append([
+            InlineKeyboardButton(text="💬 Коментар", callback_data=f"order:{order.id}:comment"),
+            InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order.id}:reminder")
+        ])
 
     # ВСЕГДА кнопка "Закрити" для webhook заказов
     buttons.append([
