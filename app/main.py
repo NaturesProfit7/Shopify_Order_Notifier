@@ -337,7 +337,6 @@ async def shopify_webhook(request: Request):
 
             # WEBHOOK заказ: отправляется ОТДЕЛЬНО (не как navigation!)
             from app.bot.services.message_builder import get_status_emoji, DIVIDER
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
             # Строим сообщение
             order_no = order_obj.order_number or order_obj.id
@@ -373,41 +372,8 @@ async def shopify_webhook(request: Request):
 
             main_message += f"\n{DIVIDER}"
 
-            # ПРОСТАЯ клавиатура с кнопкой "Закрити"
-            webhook_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                # Кнопки статуса (если NEW)
-                [
-                    InlineKeyboardButton(text="✅ Зв'язались", callback_data=f"order:{order_id}:contacted"),
-                    InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order_id}:cancel")
-                ] if order_obj.status == OrderStatus.NEW else (
-                    [
-                        InlineKeyboardButton(text="💰 Оплатили", callback_data=f"order:{order_id}:paid"),
-                        InlineKeyboardButton(text="❌ Скасування", callback_data=f"order:{order_id}:cancel")
-                    ] if order_obj.status == OrderStatus.WAITING_PAYMENT else []
-                ),
-
-                # Файлы
-                [
-                    InlineKeyboardButton(text="📄 PDF", callback_data=f"order:{order_id}:resend:pdf"),
-                    InlineKeyboardButton(text="📱 VCF", callback_data=f"order:{order_id}:resend:vcf")
-                ],
-
-                # Реквизиты
-                [
-                    InlineKeyboardButton(text="💳 Реквізити", callback_data=f"order:{order_id}:payment")
-                ],
-
-                # Дополнительные действия (для активных заказов)
-                [
-                    InlineKeyboardButton(text="💬 Коментар", callback_data=f"order:{order_id}:comment"),
-                    InlineKeyboardButton(text="⏰ Нагадати", callback_data=f"order:{order_id}:reminder")
-                ] if order_obj.status in [OrderStatus.NEW, OrderStatus.WAITING_PAYMENT] else [],
-
-                # КНОПКА ЗАКРЫТЬ для webhook заказов
-                [
-                    InlineKeyboardButton(text="❌ Закрити", callback_data=f"webhook:{order_id}:close")
-                ]
-            ])
+            from app.bot.routers.shared import get_webhook_order_keyboard
+            webhook_keyboard = get_webhook_order_keyboard(order_obj)
 
             # Отправляем сообщение каждому менеджеру
             from app.bot.routers.shared import add_webhook_message
