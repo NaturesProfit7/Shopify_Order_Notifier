@@ -53,13 +53,11 @@ logs/
 .vscode/
 *.code-workspace
 
-# Server docs with sensitive info (IPs, SSH access)
+# Internal docs — not for public repo
 SERVER_INFO.md
 SERVER_MAINTENANCE.md
-
-# Internal project docs
 PROJECT_OVERVIEW.md
-docs/review-*.md
+docs/*.md
 
 # OS junk
 .DS_Store

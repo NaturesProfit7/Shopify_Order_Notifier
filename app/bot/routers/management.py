@@ -200,6 +200,99 @@ async def handle_reminder_time(callback: CallbackQuery):
         await callback.answer(f"✅ Нагадування встановлено через {time_text}")
 
 
+@router.callback_query(F.data.contains(":create_buyer"))
+async def on_create_buyer(callback: CallbackQuery):
+    """Кнопка 'Створити покупця' — створює покупця в keyCRM."""
+    if not check_permission(callback.from_user.id):
+        return
+
+    order_id = int(callback.data.split(":")[1])
+
+    with get_session() as session:
+        order = session.get(Order, order_id)
+        if not order:
+            await callback.answer("❌ Замовлення не знайдено", show_alert=True)
+            return
+        if (order.raw_json or {}).get("_crm_buyer_id"):
+            await callback.answer("⚠️ Вже створено в CRM", show_alert=True)
+            return
+        order_display = order.order_number or order_id
+        session.expunge(order)
+
+    await callback.answer("⏳ Створюю покупця в CRM...")
+
+    try:
+        from app.services.keycrm_service import create_crm_buyer, find_buyer_by_phone
+        loop = asyncio.get_event_loop()
+
+        try:
+            result = await loop.run_in_executor(None, create_crm_buyer, order)
+            already_existed = False
+        except Exception as create_err:
+            phone = order.customer_phone_e164 or ""
+            result = None
+            if phone:
+                try:
+                    result = await loop.run_in_executor(None, find_buyer_by_phone, phone)
+                except Exception:
+                    pass
+
+            if result:
+                already_existed = True
+            else:
+                await callback.bot.send_message(
+                    callback.message.chat.id,
+                    f"❌ Помилка створення покупця: {create_err}"
+                )
+                return
+
+        buyer_id = result["id"]
+        buyer_url = result["url"]
+
+        new_keyboard = None
+        with get_session() as session:
+            fresh_order = session.get(Order, order_id)
+            if fresh_order:
+                fresh_order.raw_json = {**(fresh_order.raw_json or {}), "_crm_buyer_id": buyer_id}
+                session.commit()
+                try:
+                    from .orders import get_correct_keyboard
+                    new_keyboard = get_correct_keyboard(fresh_order, callback.message)
+                except Exception as e:
+                    debug_print(f"Failed to build buyer keyboard: {e}", "WARN")
+
+        if new_keyboard:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=new_keyboard)
+            except Exception as e:
+                debug_print(f"Failed to update keyboard after buyer creation: {e}", "WARN")
+
+        if already_existed:
+            text = (
+                f"⚠️ Покупець вже існує в CRM\n"
+                f"🔗 <a href='{buyer_url}'>Відкрити в keyCRM</a>"
+            )
+        else:
+            text = (
+                f"✅ Покупець до замовлення <b>#{order_display}</b> створений в CRM\n"
+                f"🔗 <a href='{buyer_url}'>Відкрити в keyCRM</a>"
+            )
+
+        await callback.bot.send_message(
+            callback.message.chat.id,
+            text,
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    except Exception as e:
+        debug_print(f"Buyer creation failed for order {order_id}: {e}", "ERROR")
+        await callback.bot.send_message(
+            callback.message.chat.id,
+            f"❌ Помилка створення покупця: {e}"
+        )
+
+
 @router.callback_query(F.data.contains(":create_crm"))
 async def on_create_crm(callback: CallbackQuery):
     """Кнопка 'Створити в CRM' — створює замовлення в keyCRM."""

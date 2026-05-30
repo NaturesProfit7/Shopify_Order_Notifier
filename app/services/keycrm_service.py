@@ -15,6 +15,7 @@ KEYCRM_API_KEY = os.getenv("KEYCRM_API_KEY", "")
 KEYCRM_SOURCE_ID = int(os.getenv("KEYCRM_SOURCE_ID", "2"))
 KEYCRM_BASE_URL = "https://openapi.keycrm.app/v1"
 KEYCRM_APP_URL = "https://timosh-design.keycrm.app/app/orders/view"
+KEYCRM_BUYER_URL = "https://timosh-design.keycrm.app/app/clients"
 
 KYIV_TZ = pytz.timezone("Europe/Kyiv")
 
@@ -28,6 +29,49 @@ _session.headers.update({
     "Content-Type": "application/json",
     "Accept": "application/json",
 })
+
+
+def create_crm_buyer(order) -> dict:
+    """Create buyer in keyCRM. Returns {"id": int, "url": str}.
+    Designed to run in a thread via asyncio.run_in_executor."""
+    raw = order.raw_json or {}
+
+    first_name = (order.customer_first_name or "").strip()
+    last_name = (order.customer_last_name or "").strip()
+    full_name = f"{first_name} {last_name}".strip() or "Без імені"
+
+    phone = order.customer_phone_e164 or None
+    email = raw.get("email") or None
+
+    body = {"full_name": full_name}
+    if phone:
+        body["phone"] = [phone]
+    if email:
+        body["email"] = [email]
+
+    response = _session.post(f"{KEYCRM_BASE_URL}/buyer", json=body, timeout=30)
+    response.raise_for_status()
+
+    buyer_id = response.json()["id"]
+    return {"id": buyer_id, "url": f"{KEYCRM_BUYER_URL}/{buyer_id}"}
+
+
+def find_buyer_by_phone(phone: str) -> dict | None:
+    """Search buyer in keyCRM by phone. Returns {"id": int, "url": str} or None.
+    Designed to run in a thread via asyncio.run_in_executor."""
+    response = _session.get(
+        f"{KEYCRM_BASE_URL}/buyer",
+        params={"filter[buyer_phone]": phone, "limit": 1},
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    data = response.json().get("data") or []
+    if not data:
+        return None
+
+    buyer_id = data[0]["id"]
+    return {"id": buyer_id, "url": f"{KEYCRM_BUYER_URL}/{buyer_id}"}
 
 
 def create_crm_order(order) -> dict:
