@@ -6,8 +6,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pass}
       POSTGRES_DB: ${POSTGRES_DB:-shopify_orders}
+    # ТОЛЬКО 127.0.0.1! Docker пробрасывает порты в обход ufw — с "5432:5432"
+    # база доступна из интернета. Через это сервер взломали 08.05.2026:
+    # брутфорс пароля → майнер в PGDATA (см. docs/server.md)
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
