@@ -1,11 +1,21 @@
 import os
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytz
 import requests
 from dotenv import load_dotenv
+
+from app.services.order_fields import (
+    DELIVERY_SERVICE,
+    build_customer_line,
+    build_delivery_lines,
+    build_payment_lines,
+    format_money,
+    get_checkout_id,
+    get_payment_info,
+)
 
 load_dotenv()
 
@@ -16,6 +26,19 @@ KEYCRM_SOURCE_ID = int(os.getenv("KEYCRM_SOURCE_ID", "2"))
 KEYCRM_BASE_URL = "https://openapi.keycrm.app/v1"
 KEYCRM_APP_URL = "https://timosh-design.keycrm.app/app/orders/view"
 KEYCRM_BUYER_URL = "https://timosh-design.keycrm.app/app/clients"
+
+# «Еквайринг» в справочнике методов оплаты keyCRM (GET /order/payment-method)
+KEYCRM_PAYMENT_METHOD_ID = int(os.getenv("KEYCRM_PAYMENT_METHOD_ID", "7"))
+
+# Поиск внешней транзакции: checkout id лежит в description транзакции
+# («44411110******61 <checkout id>»), поэтому фильтра по нему в API нет —
+# перебираем непривязанные транзакции за окно вокруг даты заказа.
+TRANSACTION_SEARCH_PAGES = 20
+TRANSACTION_SEARCH_LIMIT = 50
+TRANSACTION_SEARCH_DAYS_BEFORE = 3
+TRANSACTION_SEARCH_DAYS_AFTER = 1
+
+COMMENT_DIVIDER = "———"
 
 KYIV_TZ = pytz.timezone("Europe/Kyiv")
 
@@ -103,6 +126,196 @@ def create_crm_order(order) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Привязка оплаты Chekly к замовленню в keyCRM
+# ---------------------------------------------------------------------------
+
+def _parse_crm_datetime(value: str | None) -> datetime | None:
+    """'2026-09-05T19:40:29.000000Z' → aware datetime (UTC)."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _transaction_matches(transaction: dict, checkout_id: str) -> bool:
+    """Транзакция относится к нашему заказу, если checkout id встречается
+    в её описании (там keyCRM хранит «маска картки + checkout id») либо
+    в одном из идентификаторов."""
+    needle = checkout_id.lower()
+    for field in ("description", "source_uuid", "uuid"):
+        value = transaction.get(field)
+        if value and needle in str(value).lower():
+            return True
+    return False
+
+
+def find_external_transaction(checkout_id: str, order_created_at: str | None = None) -> dict | None:
+    """Ищет внешнюю транзакцию keyCRM по checkout id платёжки.
+
+    Фильтра по описанию в API нет, поэтому перебираем непривязанные
+    транзакции (свежие идут первыми) и останавливаемся, когда ушли по дате
+    заведомо раньше заказа.
+
+    Designed to run in a thread via asyncio.run_in_executor.
+    """
+    if not checkout_id:
+        return None
+
+    # Дешёвая попытка: вдруг платёжный сервис положил checkout id в uuid
+    response = _session.get(
+        f"{KEYCRM_BASE_URL}/payments/external-transactions",
+        params={"filter[transaction_uuid]": checkout_id, "limit": 1},
+        timeout=30,
+    )
+    response.raise_for_status()
+    exact = response.json().get("data") or []
+    if exact:
+        return exact[0]
+
+    created_at = _parse_crm_datetime(order_created_at)
+    cutoff = created_at - timedelta(days=TRANSACTION_SEARCH_DAYS_BEFORE) if created_at else None
+    seen_recent = cutoff is None
+
+    for page in range(1, TRANSACTION_SEARCH_PAGES + 1):
+        response = _session.get(
+            f"{KEYCRM_BASE_URL}/payments/external-transactions",
+            params={
+                "filter[is_attached]": "false",
+                "limit": TRANSACTION_SEARCH_LIMIT,
+                "page": page,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        transactions = payload.get("data") or []
+        if not transactions:
+            return None
+
+        page_has_recent = False
+        for transaction in transactions:
+            if _transaction_matches(transaction, checkout_id):
+                return transaction
+
+            transaction_date = _parse_crm_datetime(transaction.get("transaction_date"))
+            if cutoff is None or transaction_date is None or transaction_date >= cutoff:
+                page_has_recent = True
+
+        seen_recent = seen_recent or page_has_recent
+        # список идёт от свежих к старым: как только целая страница оказалась
+        # старше окна поиска — дальше искать бессмысленно
+        if seen_recent and not page_has_recent:
+            return None
+        if not payload.get("next_page_url"):
+            return None
+
+    logger.warning("keyCRM: transaction for checkout %s not found in %s pages",
+                   checkout_id, TRANSACTION_SEARCH_PAGES)
+    return None
+
+
+def create_order_payment(crm_order_id: int, amount: float, description: str | None = None,
+                         payment_date: str | None = None) -> dict:
+    """Создаёт оплату у замовлення в keyCRM. Возвращает объект оплаты."""
+    body = {
+        "payment_method_id": KEYCRM_PAYMENT_METHOD_ID,
+        "amount": amount,
+        "status": "paid",
+    }
+    if description:
+        body["description"] = description
+    if payment_date:
+        body["payment_date"] = payment_date
+
+    response = _session.post(
+        f"{KEYCRM_BASE_URL}/order/{crm_order_id}/payment", json=body, timeout=30
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def attach_transaction_to_payment(payment_id: int, transaction: dict) -> None:
+    """Прикрепляет внешнюю транзакцию к созданной оплате."""
+    body = {"transaction_id": transaction["id"]}
+    if transaction.get("uuid"):
+        body["transaction_uuid"] = str(transaction["uuid"])
+
+    response = _session.post(
+        f"{KEYCRM_BASE_URL}/payments/{payment_id}/external-transactions",
+        json=body,
+        timeout=30,
+    )
+    response.raise_for_status()
+
+
+def attach_payment_to_crm_order(order, crm_order_id: int) -> dict:
+    """Привязывает оплату Chekly к созданному замовленню keyCRM.
+
+    Оплату создаём только если транзакция нашлась — иначе менеджер
+    привязывает её руками, а бот пишет об этом в Telegram.
+
+    Возвращает {"status": ...} со значениями:
+        attached              — оплата создана и привязана
+        no_checkout_id        — заказ не из Chekly
+        no_amount             — Shopify не отдал сумму оплаты
+        transaction_not_found — транзакции с таким checkout id нет в CRM
+
+    Designed to run in a thread via asyncio.run_in_executor.
+    """
+    raw = order.raw_json or {}
+
+    checkout_id = get_checkout_id(raw)
+    if not checkout_id:
+        return {"status": "no_checkout_id"}
+
+    info = get_payment_info(raw)
+    amount = info["paid"]
+    if not amount or amount <= 0:
+        return {"status": "no_amount", "checkout_id": checkout_id}
+
+    transaction = find_external_transaction(checkout_id, raw.get("created_at"))
+    if not transaction:
+        return {
+            "status": "transaction_not_found",
+            "checkout_id": checkout_id,
+            "amount": amount,
+            "is_partial": info["is_partial"],
+        }
+
+    description = f"Chekly {checkout_id}"
+    if info["is_partial"]:
+        description = f"Часткова оплата • {description}"
+
+    payment = create_order_payment(
+        crm_order_id,
+        amount=amount,
+        description=description,
+        payment_date=_format_payment_date(transaction.get("transaction_date")),
+    )
+    attach_transaction_to_payment(payment["id"], transaction)
+
+    return {
+        "status": "attached",
+        "checkout_id": checkout_id,
+        "amount": amount,
+        "currency": info["currency"],
+        "is_partial": info["is_partial"],
+        "payment_id": payment["id"],
+        "transaction_id": transaction["id"],
+    }
+
+
+def _format_payment_date(transaction_date: str | None) -> str | None:
+    """UTC-дата транзакции → 'YYYY-MM-DD HH:MM:SS' по Киеву."""
+    parsed = _parse_crm_datetime(transaction_date)
+    if not parsed:
+        return None
+    return parsed.astimezone(KYIV_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ---------------------------------------------------------------------------
 # Manager comment builder
 # ---------------------------------------------------------------------------
 
@@ -117,30 +330,16 @@ def _format_manager_comment(raw: dict, tg_comment: str | None = None) -> str:
     if created_at:
         parts.append(f"Дата: {_format_date(created_at)}")
 
-    shipping_lines = raw.get("shipping_lines") or []
-    if shipping_lines:
-        service = (shipping_lines[0].get("title") or "").strip()
-        if service:
-            parts.append(f"Доставка: {service}")
+    # Статус оплати / Передоплата / Залишок — тот же формат, что и в PDF
+    parts.extend(build_payment_lines(raw))
 
-    shipping = raw.get("shipping_address") or {}
-    if shipping:
+    parts.append(build_customer_line(raw))
+    parts.append(f"Доставка: {DELIVERY_SERVICE}")
+
+    delivery_lines = build_delivery_lines(raw)
+    if delivery_lines:
         parts.append("Адреса доставки:")
-        first = (shipping.get("first_name") or "").strip()
-        last = (shipping.get("last_name") or "").strip()
-        full = f"{first} {last}".strip()
-        if full:
-            parts.append(full)
-        for field in ("address1", "address2", "city", "zip", "country", "province"):
-            val = (shipping.get(field) or "").strip()
-            if val:
-                parts.append(val)
-        phone = (shipping.get("phone") or "").strip()
-        if phone:
-            parts.append(phone)
-        email = (raw.get("email") or "").strip()
-        if email:
-            parts.append(email)
+        parts.extend(delivery_lines)
 
     line_items = raw.get("line_items") or []
     for item in line_items:
@@ -175,7 +374,32 @@ def _format_manager_comment(raw: dict, tg_comment: str | None = None) -> str:
         parts.append("")
         parts.append(tg_comment.strip())
 
+    checkout_block = _build_checkout_block(raw)
+    if checkout_block:
+        parts.append("")
+        parts.append(checkout_block)
+
     return "\n".join(parts)
+
+
+def _build_checkout_block(raw: dict) -> str:
+    """Хвост комментария под чертой: Checkout ID и фактическая оплата."""
+    checkout_id = get_checkout_id(raw)
+    if not checkout_id:
+        return ""
+
+    info = get_payment_info(raw)
+    lines = [COMMENT_DIVIDER, f"Checkout ID: {checkout_id}"]
+
+    if info["is_partial"] and info["paid"] is not None and info["total"] is not None:
+        lines.append(
+            f"Оплата: часткова — {info['paid']:.2f} з "
+            f"{format_money(info['total'], info['currency'])}"
+        )
+    elif info["status"] == "paid" and info["paid"] is not None:
+        lines.append(f"Оплата: повна — {format_money(info['paid'], info['currency'])}")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,28 @@
 # app/bot/services/message_builder.py
 from app.models import Order, OrderStatus
+from app.services.order_fields import build_delivery_short, format_money, get_payment_info
 
 # Using a simple hyphen line avoids rendering issues across devices
 DIVIDER = "-" * 5
+
+
+def build_payment_line(raw_json: dict | None) -> str | None:
+    """Строка статуса оплаты Shopify для карточки заказа.
+
+    💳 <b>Статус оплати:</b> Частково сплачено • передоплата 200.00 UAH
+    Возвращает None, если Shopify не прислал понятный financial_status.
+    """
+    if not raw_json:
+        return None
+
+    info = get_payment_info(raw_json)
+    if not info["label"]:
+        return None
+
+    line = f"💳 <b>Статус оплати:</b> {info['label']}"
+    if info["is_partial"] and info["paid"] is not None:
+        line += f" • передоплата {format_money(info['paid'], info['currency'])}"
+    return line
 
 
 def get_status_emoji(status: OrderStatus) -> str:
@@ -75,19 +95,20 @@ def build_order_message(order: Order, detailed: bool = False) -> str:
                 message += f"\n<i>...та ще {len(items) - 5} товарів</i>"
 
         # Доставка
-        shipping = data.get("shipping_address", {})
-        if shipping:
-            city = shipping.get("city", "")
-            address = shipping.get("address1", "")
-            if city or address:
-                delivery_parts = [p for p in [city, address] if p]
-                message += f"\n📍 <b>Доставка:</b> {', '.join(delivery_parts)}"
+        delivery = build_delivery_short(data)
+        if delivery:
+            message += f"\n📍 <b>Доставка:</b> {delivery}"
 
         # Сумма
         total = data.get("total_price", "")
         currency = data.get("currency", "UAH")
         if total:
             message += f"\n💰 <b>Сума:</b> {total} {currency}"
+
+        # Статус оплаты Shopify
+        payment_line = build_payment_line(data)
+        if payment_line:
+            message += f"\n{payment_line}"
 
     # Дополнительная информация (если есть)
     if order.comment or order.reminder_at or order.processed_by_username:

@@ -10,7 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.models import Order, OrderStatus, OrderStatusHistory
-from app.bot.services.message_builder import get_status_emoji, get_status_text, DIVIDER
+from app.bot.services.message_builder import (
+    get_status_emoji,
+    get_status_text,
+    build_payment_line,
+    DIVIDER,
+)
+from app.services.order_fields import build_delivery_short
 from app.services.pdf_service import build_order_pdf
 from app.services.vcf_service import build_contact_vcf
 
@@ -74,19 +80,20 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
                     message += f" <i>+ще {len(items) - 5}</i>"
 
         # Доставка
-        shipping = data.get("shipping_address", {})
-        if shipping:
-            city = shipping.get("city", "")
-            address = shipping.get("address1", "")
-            if city or address:
-                delivery_parts = [p for p in [city, address] if p]
-                message += f"\n📍 <b>Доставка:</b> {', '.join(delivery_parts)}"
+        delivery = build_delivery_short(data)
+        if delivery:
+            message += f"\n📍 <b>Доставка:</b> {delivery}"
 
         # Сумма
         total = data.get("total_price", "")
         currency = data.get("currency", "UAH")
         if total:
             message += f"\n💰 <b>Сума:</b> {total} {currency}"
+
+        # Статус оплаты Shopify (Сплачено / Частково сплачено + передоплата)
+        payment_line = build_payment_line(data)
+        if payment_line:
+            message += f"\n{payment_line}"
 
     message += f"\n{DIVIDER}"
 
@@ -368,18 +375,10 @@ async def on_resend_file(callback: CallbackQuery):
                 
                 pdf_file = BufferedInputFile(pdf_bytes, pdf_filename)
 
-                from app.services.message_templates import render_simple_confirm_with_contact
-                from app.services.address_utils import get_delivery_and_contact_info, get_contact_name
+                from app.services.message_templates import render_client_order_accepted
 
                 template_start = time.time()
-                _, contact_info = get_delivery_and_contact_info(order.raw_json)
-                contact_first_name, contact_last_name = get_contact_name(contact_info)
-
-                client_message = render_simple_confirm_with_contact(
-                    order.raw_json,
-                    contact_first_name,
-                    contact_last_name
-                )
+                client_message = render_client_order_accepted(order.raw_json)
                 template_time = time.time() - template_start
                 debug_print(f"📝 Template rendered in {template_time:.2f}s for order {order_id}")
 

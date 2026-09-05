@@ -12,11 +12,18 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 
-from app.services.phone_utils import normalize_ua_phone, pretty_ua_phone
-from app.services.address_utils import get_delivery_and_contact_info, build_delivery_address_text, addresses_are_same
+from app.services.order_fields import (
+    DELIVERY_SERVICE,
+    build_customer_line,
+    build_delivery_lines,
+    build_payment_lines,
+)
 
 FNT_REGULAR = "DejaVuSans"
 FNT_BOLD = "DejaVuSans-Bold"
+
+# Отступ между текстовой колонкой шапки и логотипом
+BRAND_GAP_MM = 5.0
 
 
 # ---------- fonts ----------
@@ -40,15 +47,6 @@ def _fmt_date(dt_str: str | None) -> str:
         return datetime.fromisoformat(dt_str.replace("Z", "+00:00")).strftime("%d.%m.%Y %H:%M")
     except Exception:
         return datetime.now().strftime("%d.%m.%Y %H:%М")
-
-
-def _shipping_title(order: dict) -> str:
-    lines = order.get("shipping_lines") or []
-    if lines:
-        title = (lines[0].get("title") or "").strip()
-        if title:
-            return title
-    return "—"
 
 
 def _currency(order: dict) -> str:
@@ -80,6 +78,45 @@ def _wrap_text(c: canvas.Canvas, text: str, x: float, y: float, max_width: float
     return y
 
 
+def _wrap_text_dynamic(c: canvas.Canvas, text: str, x: float, y: float,
+                       font: str, size: int, line_step: float,
+                       width_for, indent: float = 0.0) -> float:
+    """Как `_wrap_text`, но доступная ширина зависит от текущей строки.
+
+    Нужно для шапки: пока строка идёт напротив логотипа, текст верстается
+    в узкую левую колонку, ниже логотипа — на всю ширину страницы.
+    `width_for(y)` возвращает доступную ширину для строки с базовой линией `y`,
+    `indent` — втяжка строк переноса.
+
+    Разбиваем только по обычным пробелам: неразрывный пробел (U+00A0) держит
+    вместе, например, телефон.
+    """
+    c.setFont(font, size)
+    words = [w for w in str(text).replace("\t", " ").split(" ") if w]
+    if not words:
+        return y
+
+    line = ""
+    offset = 0.0
+    index = 0
+    while index < len(words):
+        word = words[index]
+        trial = f"{line} {word}".strip()
+        if not line or c.stringWidth(trial, font, size) <= width_for(y) - offset:
+            line = trial
+            index += 1
+        else:
+            c.drawString(x + offset, y, line)
+            y -= line_step
+            line = ""
+            offset = indent
+
+    if line:
+        c.drawString(x + offset, y, line)
+        y -= line_step
+    return y
+
+
 def _draw_properties(c: canvas.Canvas, props: List[Dict[str, Any]], x: float, y: float,
                      usable_w: float, font: str, size: int, step: float, bullet="• ") -> float:
     """Список свойств товара (пропуская имена, начинающиеся с '_')."""
@@ -93,10 +130,14 @@ def _draw_properties(c: canvas.Canvas, props: List[Dict[str, Any]], x: float, y:
     return y
 
 
-def _try_draw_brand(c: canvas.Canvas, x_right: float, y_top: float, *, max_w_mm: float, max_h_mm: float):
+def _try_draw_brand(c: canvas.Canvas, x_right: float, y_top: float, *,
+                    max_w_mm: float, max_h_mm: float) -> Tuple[float, float] | None:
     """
     Рисует картинку (если найдена) в правом верхнем углу.
     Ищем: app/assets/img/brand.(png|jpg|webp)
+
+    Возвращает (x_left, y_bottom) реально отрисованного логотипа — по этим
+    координатам шапка документа обходит картинку, чтобы текст на неё не налазил.
     """
     try:
         base = Path(__file__).resolve().parents[1] / "assets" / "img"
@@ -111,17 +152,26 @@ def _try_draw_brand(c: canvas.Canvas, x_right: float, y_top: float, *, max_w_mm:
                 w, h = iw * scale, ih * scale
                 c.drawImage(img, x_right - w, y_top - h, width=w, height=h,
                             preserveAspectRatio=True, mask="auto")
-                return
+                return x_right - w, y_top - h
     except Exception:
         pass
+    return None
 
 
 # ---------- main ----------
 def build_order_pdf(order: dict) -> Tuple[bytes, str]:
     """
-    ОБНОВЛЕННАЯ ВЕРСИЯ с новой логикой адресов:
-    - Если адреса одинаковые → используем shipping
-    - Если адреса разные → billing для доставки, shipping для контакта
+    Накладная заказа.
+
+    Шапка (данные берутся из note_attributes Chekly, см. order_fields):
+        Дата: ...
+        Статус оплати: Сплачено / Частково сплачено
+        Передоплата: ... / Залишок: ...   — только при частичной оплате
+        Замовник: ФІО, телефон            — всегда
+        Доставка: Нова Пошта
+        Адреса доставки: (отримувач, відділення, місто, індекс, країна, телефон, email)
+
+    Пока строки идут напротив логотипа, они верстаются в узкую левую колонку.
     """
     import time
     import logging
@@ -137,26 +187,7 @@ def build_order_pdf(order: dict) -> Tuple[bytes, str]:
 
     order_no = order.get("order_number") or order.get("id") or "—"
     created = _fmt_date(order.get("created_at"))
-    ship_title = _shipping_title(order)
     cur = _currency(order)
-
-    # НОВАЯ ЛОГИКА: определяем адрес доставки
-    delivery_address, contact_info = get_delivery_and_contact_info(order)
-    # Получаем email клиента из заказа
-    customer_email = order.get('email') or order.get('contact_email') or ''
-    delivery_text = build_delivery_address_text(delivery_address, email=customer_email)
-
-    # Определяем сценарий для информации
-    shipping = order.get('shipping_address', {})
-    billing = order.get('billing_address', {})
-
-    # Если адреса разные - добавляем информацию о заказчике
-    scenario_info = ""
-    if shipping and billing:
-        if not addresses_are_same(shipping, billing):
-            contact_name = f"{contact_info.get('first_name', '')} {contact_info.get('last_name', '')}".strip()
-            if contact_name:
-                scenario_info = f"Замовник: {contact_name}"
 
     # Разметка страницы
     top = height - 20 * mm
@@ -171,34 +202,40 @@ def build_order_pdf(order: dict) -> Tuple[bytes, str]:
     c.setFont(title_font, 16)
     c.drawString(x0, top, f"Замовлення №{order_no}")
 
-    # Бренд справа сверху
-    _try_draw_brand(c, x_right=right, y_top=top + 2 * mm, max_w_mm=89.25, max_h_mm=51.0)
+    # Бренд справа сверху — сдвинут ближе к краю листа, чтобы освободить
+    # место под текстовую колонку шапки
+    brand_box = _try_draw_brand(c, x_right=width - 8 * mm, y_top=top + 2 * mm,
+                                max_w_mm=89.25, max_h_mm=51.0)
+
+    header_size = 10
+    header_step = 5.4 * mm
+
+    def header_width(y_line: float) -> float:
+        """Ширина строки шапки: узкая колонка напротив логотипа, ниже — полная."""
+        if brand_box is None:
+            return right - x0
+        brand_x_left, brand_y_bottom = brand_box
+        # строка занимает по высоте примерно от y_line до y_line + размер шрифта
+        if y_line + header_size < brand_y_bottom:
+            return right - x0
+        return max(brand_x_left - BRAND_GAP_MM * mm - x0, 30 * mm)
 
     # Шапка
     y = top - 10 * mm
-    c.setFont(text_font, 11)
-    c.drawString(x0, y, f"Дата: {created}")
-    y -= 6.2 * mm
-    c.drawString(x0, y, f"Доставка: {ship_title}")
-    y -= 6.2 * mm
+    header_lines = [f"Дата: {created}"]
+    header_lines += build_payment_lines(order)
+    header_lines.append(build_customer_line(order, keep_phone_together=True))
+    header_lines.append(f"Доставка: {DELIVERY_SERVICE}")
+    header_lines.append("Адреса доставки:")
+    header_lines += build_delivery_lines(order)
 
-    # ОБНОВЛЕННЫЙ блок адреса доставки
-    c.setFont(text_font, 11)
-    c.drawString(x0, y, "Адреса доставки:")
-    y -= 5.2 * mm
+    for line in header_lines:
+        y = _wrap_text_dynamic(c, line, x0, y, text_font, header_size, header_step,
+                               header_width, indent=6 * mm)
 
-    # Рисуем адрес доставки
-    delivery_lines = delivery_text.split('\n')
-    for line in delivery_lines:
-        if line.strip():
-            y = _wrap_text(c, line, x0, y, right - x0, text_font, 11, 5.2 * mm)
-
-    # Если есть информация о заказчике - добавляем
-    if scenario_info:
-        y -= 3 * mm
-        c.setFont(text_font, 10)
-        c.drawString(x0, y, scenario_info)
-        y -= 5.2 * mm
+    # Товары начинаем ниже логотипа, даже если шапка получилась короткой
+    if brand_box is not None:
+        y = min(y, brand_box[1] - 6 * mm)
 
     y -= 7 * mm
 

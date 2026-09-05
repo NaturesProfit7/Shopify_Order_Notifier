@@ -336,41 +336,11 @@ async def shopify_webhook(request: Request):
                 raise HTTPException(status_code=500, detail="Database error")
 
             # WEBHOOK заказ: отправляется ОТДЕЛЬНО (не как navigation!)
-            from app.bot.services.message_builder import get_status_emoji, DIVIDER
+            # Единый билдер с карточкой заказа — формат уведомления и карточки
+            # из списка не должны расходиться (доставка, статус оплати и т.д.)
+            from app.bot.routers.orders import build_order_card_message
 
-            # Строим сообщение
-            order_no = order_obj.order_number or order_obj.id
-            status_emoji = get_status_emoji(order_obj.status)
-            customer_name = f"{order_obj.customer_first_name or ''} {order_obj.customer_last_name or ''}".strip() or "Без імені"
-            phone = order_obj.customer_phone_e164 if order_obj.customer_phone_e164 else "Не вказано"
-
-            main_message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} Новий
-{DIVIDER}
-👤 {customer_name}
-📱 {phone}"""
-
-            # Добавляем краткую информацию о товарах
-            if order_obj.raw_json and order_obj.raw_json.get("line_items"):
-                items = order_obj.raw_json["line_items"]
-                if items:
-                    items_text = []
-                    for item in items[:3]:
-                        title = item.get("title", "")
-                        qty = item.get("quantity", 0)
-                        items_text.append(f"• {title} x{qty}")
-
-                    if items_text:
-                        main_message += f"\n🛍 <b>Товари:</b> {', '.join(items_text)}"
-                        if len(items) > 3:
-                            main_message += f" <i>+ще {len(items) - 3}</i>"
-
-                # Сумма
-                total = order_obj.raw_json.get("total_price", "")
-                currency = order_obj.raw_json.get("currency", "UAH")
-                if total:
-                    main_message += f"\n💰 <b>Сума:</b> {total} {currency}"
-
-            main_message += f"\n{DIVIDER}"
+            main_message = build_order_card_message(order_obj, detailed=True)
 
             from app.bot.routers.shared import get_webhook_order_keyboard
             webhook_keyboard = get_webhook_order_keyboard(order_obj)

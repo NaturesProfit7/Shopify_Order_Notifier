@@ -2,6 +2,49 @@
 from __future__ import annotations
 from jinja2 import Template
 
+from app.services.order_fields import get_customer_given_name, get_payment_info
+
+# Текст, который менеджер пересылает клиенту вместе с PDF
+CLIENT_ORDER_ACCEPTED = Template(
+    (
+        "Вітаю, {{ first_name or 'клієнте' }} ☺️\n"
+        "Отримали ваше замовлення №{{ order_number }}\n"
+        "{% if payment_line %}{{ payment_line }}\n{% endif %}"
+        "\n"
+        "Максимальний термін виготовлення складає 7 днів, "
+        "одразу по готовності відправляємо замовлення вам\n"
+        "Передаємо в роботу, мирного дня 🙏"
+    )
+)
+
+
+def _client_payment_line(order: dict) -> str:
+    """«Статус оплати: повна передоплата» / «... часткова передоплата (200.00 грн)».
+
+    Для статусов, отличных от paid/partially_paid (возврат, ожидание),
+    строку клиенту не показываем.
+    """
+    info = get_payment_info(order)
+
+    if info["status"] == "paid":
+        return "Статус оплати: повна передоплата"
+
+    if info["is_partial"]:
+        if info["paid"] is not None:
+            return f"Статус оплати: часткова передоплата ({info['paid']:.2f} грн)"
+        return "Статус оплати: часткова передоплата"
+
+    return ""
+
+
+def render_client_order_accepted(order: dict) -> str:
+    """Сообщение клиенту, которое уходит подписью к PDF."""
+    return CLIENT_ORDER_ACCEPTED.render(
+        first_name=get_customer_given_name(order),
+        order_number=order.get("order_number") or order.get("id"),
+        payment_line=_client_payment_line(order),
+    )
+
 # Простой UA-шаблон подтверждения (без деталей)
 SIMPLE_CONFIRM = Template(
     (
