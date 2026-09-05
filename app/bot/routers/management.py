@@ -293,6 +293,27 @@ async def on_create_buyer(callback: CallbackQuery):
         )
 
 
+def _format_shipping_note(result: dict) -> str:
+    """Строка о переносе адреса доставки — дописывается к сообщению о
+    созданном замовленні через пустую строку."""
+    kind = result.get("shipping_kind")
+
+    if result.get("shipping_degraded"):
+        if kind == "address":
+            return "\n\n⚠️ Адресу перенесено текстом, без прив'язки відділення"
+        return "\n\n⚠️ Адресу доставки перенести не вдалося"
+
+    if kind == "warehouse":
+        return "\n\n📍 Адресу доставки перенесено, відділення прив'язано"
+    if kind == "courier":
+        return "\n\n📍 Адресу кур'єрської доставки перенесено"
+    if kind == "address":
+        return "\n\n📍 Адресу доставки перенесено"
+
+    # empty / none — адреси в замовленні не було
+    return ""
+
+
 @router.callback_query(F.data.contains(":create_crm"))
 async def on_create_crm(callback: CallbackQuery):
     """Кнопка 'Створити в CRM' — створює замовлення в keyCRM."""
@@ -324,6 +345,7 @@ async def on_create_crm(callback: CallbackQuery):
         result = await loop.run_in_executor(None, create_crm_order, order)
         crm_id = result["id"]
         crm_url = result["url"]
+        shipping_note = _format_shipping_note(result)
 
         # Зберігаємо CRM ID і будуємо нову клавіатуру всередині сесії (без await)
         new_keyboard = None
@@ -348,7 +370,8 @@ async def on_create_crm(callback: CallbackQuery):
         await callback.bot.send_message(
             callback.message.chat.id,
             f"✅ Замовлення <b>#{order_display}</b> створено в CRM\n"
-            f"🔗 <a href='{crm_url}'>Відкрити в keyCRM</a>",
+            f"🔗 <a href='{crm_url}'>Відкрити в keyCRM</a>"
+            f"{shipping_note}",
             parse_mode="HTML",
             disable_web_page_preview=True
         )

@@ -179,3 +179,37 @@ def test_courier_goes_without_a_warehouse(session):
     assert shipping["shipping_secondary_line"] == "вул.1-а Вишнева, буд.12, кв.55"
     # до служби доставки замовлення все одно прив'язуємо
     assert shipping["delivery_service_id"] == 2
+
+
+# --- звіт про перенесення адреси -------------------------------------------
+
+def test_result_reports_a_bound_warehouse(session):
+    result = _create("POSTOMAT_ORDER", "4586")
+
+    assert result["shipping_kind"] == "warehouse"
+    assert result["shipping_degraded"] is False
+
+
+def test_result_reports_a_courier_address(session):
+    result = _create("COURIER_ORDER", "4587")
+
+    assert result["shipping_kind"] == "courier"
+    assert result["shipping_degraded"] is False
+
+
+def test_result_reports_a_fallback_to_plain_address(session):
+    session.failures = [422]
+
+    result = _create("POSTOMAT_ORDER", "4586")
+
+    assert result["shipping_kind"] == "address"
+    assert result["shipping_degraded"] is True
+
+
+def test_result_reports_that_delivery_was_dropped(session):
+    session.failures = [422, 422]
+
+    result = _create("POSTOMAT_ORDER", "4586")
+
+    assert result["shipping_kind"] == "none"
+    assert result["shipping_degraded"] is True

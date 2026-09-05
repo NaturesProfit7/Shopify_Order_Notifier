@@ -63,3 +63,28 @@ def test_buyer_comment_is_html_escaped():
     line = build_buyer_comment_line({"note": "<b>шрифт</b> & <script>"})
 
     assert "&lt;b&gt;шрифт&lt;/b&gt; &amp; &lt;script&gt;" in line
+
+
+# --- рядок про адресу в повідомленні після створення замовлення -------------
+
+def test_shipping_note_for_a_bound_warehouse():
+    from app.bot.routers.management import _format_shipping_note
+
+    assert _format_shipping_note({"shipping_kind": "warehouse", "shipping_degraded": False}) == (
+        "\n\n📍 Адресу доставки перенесено, відділення прив'язано"
+    )
+
+
+def test_shipping_note_warns_when_binding_failed():
+    from app.bot.routers.management import _format_shipping_note
+
+    note = _format_shipping_note({"shipping_kind": "address", "shipping_degraded": True})
+
+    assert note.startswith("\n\n⚠️")
+    assert "без прив'язки" in note
+
+
+def test_no_shipping_note_when_order_has_no_address():
+    from app.bot.routers.management import _format_shipping_note
+
+    assert _format_shipping_note({"shipping_kind": "empty", "shipping_degraded": False}) == ""

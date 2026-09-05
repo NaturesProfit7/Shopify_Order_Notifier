@@ -126,16 +126,23 @@ def create_crm_order(order) -> dict:
     # одно створиться, максимум без неї (див. _create_order_with_fallback)
     shipping_variants = _build_shipping_variants(raw, parties)
 
-    crm_id = _create_order_with_fallback(body, shipping_variants)
-    return {"id": crm_id, "url": f"{KEYCRM_APP_URL}/{crm_id}"}
+    crm_id, shipping_kind, degraded = _create_order_with_fallback(body, shipping_variants)
+    return {
+        "id": crm_id,
+        "url": f"{KEYCRM_APP_URL}/{crm_id}",
+        "shipping_kind": shipping_kind,
+        "shipping_degraded": degraded,
+    }
 
 
-def _build_shipping_variants(raw: dict, parties: dict) -> list[dict | None]:
-    """Варианты блока `shipping` от полного к пустому.
+def _build_shipping_variants(raw: dict, parties: dict) -> list[tuple[str, dict | None]]:
+    """Варианты блока `shipping` от полного к пустому, каждый со своим видом:
 
-    1. привязка склада Нової Пошти (`delivery_service_id` + `warehouse_ref`)
-    2. тот же адрес текстом, без привязки
-    3. без блока доставки вообще
+    * `warehouse` — адрес + привязка отделения/почтомата Нової Пошти
+    * `courier`   — адрес курьерской доставки (склада у неё нет)
+    * `address`   — только текстовый адрес, без привязки
+    * `none`      — без блока доставки вообще
+    * `empty`     — в заказе нет адреса, отправлять нечего
     """
     delivery = get_delivery_details(raw)
 
@@ -175,24 +182,46 @@ def _build_shipping_variants(raw: dict, parties: dict) -> list[dict | None]:
             delivery["delivery_type"], delivery,
         )
 
-    variants = [full, text_only, None]
+    if full is None:
+        return [("empty", None)]
+
+    if delivery["warehouse_ref"]:
+        best = "warehouse"
+    elif delivery["is_courier"]:
+        best = "courier"
+    else:
+        best = "address"
+
+    variants = [(best, full), ("address", text_only), ("none", None)]
     # прибираємо дублі, зберігаючи порядок
-    unique: list[dict | None] = []
-    for variant in variants:
-        if variant not in unique:
-            unique.append(variant)
+    unique: list[tuple[str, dict | None]] = []
+    for kind, variant in unique_by_body(variants):
+        unique.append((kind, variant))
     return unique
 
 
-def _create_order_with_fallback(body: dict, shipping_variants: list[dict | None]) -> int:
+def unique_by_body(variants: list[tuple[str, dict | None]]) -> list[tuple[str, dict | None]]:
+    """Убирает варианты с одинаковым телом, сохраняя порядок и первый вид."""
+    result: list[tuple[str, dict | None]] = []
+    for kind, body in variants:
+        if all(body != seen for _, seen in result):
+            result.append((kind, body))
+    return result
+
+
+def _create_order_with_fallback(
+    body: dict, shipping_variants: list[tuple[str, dict | None]]
+) -> tuple[int, str, bool]:
     """Создаёт замовлення, отступая к более простому блоку доставки.
+
+    Возвращает (id замовлення, вид доставки, пришлось ли отступать).
 
     Повторяем только на ошибках валидации (4xx) — при 5xx или обрыве сети
     замовлення могло создаться, и повтор сделал бы дубль.
     """
     last_response = None
 
-    for attempt, shipping in enumerate(shipping_variants):
+    for attempt, (kind, shipping) in enumerate(shipping_variants):
         payload = {**body}
         if shipping:
             payload["shipping"] = shipping
@@ -202,16 +231,16 @@ def _create_order_with_fallback(body: dict, shipping_variants: list[dict | None]
         response = _session.post(f"{KEYCRM_BASE_URL}/order", json=payload, timeout=30)
         if response.ok:
             if attempt:
-                logger.warning("keyCRM: замовлення створено з варіантом доставки №%s", attempt + 1)
-            return response.json()["id"]
+                logger.warning("keyCRM: замовлення створено з варіантом доставки %r", kind)
+            return response.json()["id"], kind, bool(attempt)
 
         last_response = response
         if not 400 <= response.status_code < 500:
             break
 
         logger.warning(
-            "keyCRM: варіант доставки №%s відхилено (%s): %s",
-            attempt + 1, response.status_code, response.text[:300],
+            "keyCRM: варіант доставки %r відхилено (%s): %s",
+            kind, response.status_code, response.text[:300],
         )
 
     last_response.raise_for_status()
