@@ -1,11 +1,10 @@
 import os
 import re
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytz
 import requests
-from urllib.parse import urljoin
 from dotenv import load_dotenv
 
 from app.services.order_fields import (
@@ -28,17 +27,6 @@ KEYCRM_SOURCE_ID = int(os.getenv("KEYCRM_SOURCE_ID", "2"))
 KEYCRM_BASE_URL = "https://openapi.keycrm.app/v1"
 KEYCRM_APP_URL = "https://timosh-design.keycrm.app/app/orders/view"
 KEYCRM_BUYER_URL = "https://timosh-design.keycrm.app/app/clients"
-
-# «Еквайринг» в справочнике методов оплаты keyCRM (GET /order/payment-method)
-KEYCRM_PAYMENT_METHOD_ID = int(os.getenv("KEYCRM_PAYMENT_METHOD_ID", "7"))
-
-# Поиск внешней транзакции: checkout id лежит в description транзакции
-# («44411110******61 <checkout id>»), поэтому фильтра по нему в API нет —
-# перебираем непривязанные транзакции за окно вокруг даты заказа.
-TRANSACTION_SEARCH_PAGES = 20
-TRANSACTION_SEARCH_LIMIT = 50
-TRANSACTION_SEARCH_DAYS_BEFORE = 3
-TRANSACTION_SEARCH_DAYS_AFTER = 1
 
 COMMENT_DIVIDER = "———"
 
@@ -143,216 +131,6 @@ def create_crm_order(order) -> dict:
 
     crm_id = response.json()["id"]
     return {"id": crm_id, "url": f"{KEYCRM_APP_URL}/{crm_id}"}
-
-
-# ---------------------------------------------------------------------------
-# Привязка оплаты Chekly к замовленню в keyCRM
-# ---------------------------------------------------------------------------
-
-def _parse_crm_datetime(value: str | None) -> datetime | None:
-    """'2026-09-05T19:40:29.000000Z' → aware datetime (UTC)."""
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def _transaction_matches(transaction: dict, checkout_id: str) -> bool:
-    """Транзакция относится к нашему заказу, если checkout id встречается
-    в её описании (там keyCRM хранит «маска картки + checkout id») либо
-    в одном из идентификаторов."""
-    needle = checkout_id.lower()
-    for field in ("description", "source_uuid", "uuid"):
-        value = transaction.get(field)
-        if value and needle in str(value).lower():
-            return True
-    return False
-
-
-def find_external_transaction(checkout_id: str, order_created_at: str | None = None) -> dict | None:
-    """Ищет внешнюю транзакцию keyCRM по checkout id платёжки.
-
-    Фильтра по описанию в API нет, поэтому перебираем непривязанные
-    транзакции (свежие идут первыми) и останавливаемся, когда ушли по дате
-    заведомо раньше заказа.
-
-    Designed to run in a thread via asyncio.run_in_executor.
-    """
-    if not checkout_id:
-        return None
-
-    # Дешёвая попытка: вдруг платёжный сервис положил checkout id в uuid
-    response = _session.get(
-        f"{KEYCRM_BASE_URL}/payments/external-transactions",
-        params={"filter[transaction_uuid]": checkout_id, "limit": 1},
-        timeout=30,
-    )
-    response.raise_for_status()
-    exact = response.json().get("data") or []
-    if exact:
-        return exact[0]
-
-    created_at = _parse_crm_datetime(order_created_at)
-    cutoff = created_at - timedelta(days=TRANSACTION_SEARCH_DAYS_BEFORE) if created_at else None
-    seen_recent = cutoff is None
-
-    for page in range(1, TRANSACTION_SEARCH_PAGES + 1):
-        response = _session.get(
-            f"{KEYCRM_BASE_URL}/payments/external-transactions",
-            params={
-                "filter[is_attached]": "false",
-                "limit": TRANSACTION_SEARCH_LIMIT,
-                "page": page,
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        transactions = payload.get("data") or []
-        if not transactions:
-            return None
-
-        page_has_recent = False
-        for transaction in transactions:
-            if _transaction_matches(transaction, checkout_id):
-                return transaction
-
-            transaction_date = _parse_crm_datetime(transaction.get("transaction_date"))
-            if cutoff is None or transaction_date is None or transaction_date >= cutoff:
-                page_has_recent = True
-
-        seen_recent = seen_recent or page_has_recent
-        # список идёт от свежих к старым: как только целая страница оказалась
-        # старше окна поиска — дальше искать бессмысленно
-        if seen_recent and not page_has_recent:
-            return None
-        if not payload.get("next_page_url"):
-            return None
-
-    logger.warning("keyCRM: transaction for checkout %s not found in %s pages",
-                   checkout_id, TRANSACTION_SEARCH_PAGES)
-    return None
-
-
-def _post_json(url: str, body: dict) -> dict:
-    """POST в keyCRM, устойчивый к редиректам.
-
-    При 301/302/303 requests меняет метод на GET и повторяет запрос — keyCRM
-    в ответ говорит «The GET method is not supported… Supported methods: POST».
-    Поэтому редиректы не отдаём библиотеке, а повторяем POST сами.
-    """
-    response = _session.post(url, json=body, timeout=30, allow_redirects=False)
-
-    for _ in range(3):
-        if not response.is_redirect:
-            break
-        location = response.headers.get("Location")
-        if not location:
-            break
-        url = urljoin(url, location)
-        logger.info("keyCRM: redirect on POST, repeating as POST to %s", url)
-        response = _session.post(url, json=body, timeout=30, allow_redirects=False)
-
-    if not response.ok:
-        # тело ответа keyCRM объясняет причину гораздо лучше, чем статус
-        raise requests.HTTPError(
-            f"{response.status_code} {response.reason} for {url}: {response.text[:500]}",
-            response=response,
-        )
-
-    return response.json()
-
-
-def create_order_payment(crm_order_id: int, amount: float, description: str | None = None,
-                         payment_date: str | None = None) -> dict:
-    """Создаёт оплату у замовлення в keyCRM. Возвращает объект оплаты."""
-    body = {
-        "payment_method_id": KEYCRM_PAYMENT_METHOD_ID,
-        "amount": amount,
-        "status": "paid",
-    }
-    if description:
-        body["description"] = description
-    if payment_date:
-        body["payment_date"] = payment_date
-
-    return _post_json(f"{KEYCRM_BASE_URL}/order/{crm_order_id}/payment", body)
-
-
-def attach_transaction_to_payment(payment_id: int, transaction: dict) -> None:
-    """Прикрепляет внешнюю транзакцию к созданной оплате."""
-    body = {"transaction_id": transaction["id"]}
-    if transaction.get("uuid"):
-        body["transaction_uuid"] = str(transaction["uuid"])
-
-    _post_json(f"{KEYCRM_BASE_URL}/payments/{payment_id}/external-transactions", body)
-
-
-def attach_payment_to_crm_order(order, crm_order_id: int) -> dict:
-    """Привязывает оплату Chekly к созданному замовленню keyCRM.
-
-    Оплату создаём только если транзакция нашлась — иначе менеджер
-    привязывает её руками, а бот пишет об этом в Telegram.
-
-    Возвращает {"status": ...} со значениями:
-        attached              — оплата создана и привязана
-        no_checkout_id        — заказ не из Chekly
-        no_amount             — Shopify не отдал сумму оплаты
-        transaction_not_found — транзакции с таким checkout id нет в CRM
-
-    Designed to run in a thread via asyncio.run_in_executor.
-    """
-    raw = order.raw_json or {}
-
-    checkout_id = get_checkout_id(raw)
-    if not checkout_id:
-        return {"status": "no_checkout_id"}
-
-    info = get_payment_info(raw)
-    amount = info["paid"]
-    if not amount or amount <= 0:
-        return {"status": "no_amount", "checkout_id": checkout_id}
-
-    transaction = find_external_transaction(checkout_id, raw.get("created_at"))
-    if not transaction:
-        return {
-            "status": "transaction_not_found",
-            "checkout_id": checkout_id,
-            "amount": amount,
-            "is_partial": info["is_partial"],
-        }
-
-    description = f"Chekly {checkout_id}"
-    if info["is_partial"]:
-        description = f"Часткова оплата • {description}"
-
-    payment = create_order_payment(
-        crm_order_id,
-        amount=amount,
-        description=description,
-        payment_date=_format_payment_date(transaction.get("transaction_date")),
-    )
-    attach_transaction_to_payment(payment["id"], transaction)
-
-    return {
-        "status": "attached",
-        "checkout_id": checkout_id,
-        "amount": amount,
-        "currency": info["currency"],
-        "is_partial": info["is_partial"],
-        "payment_id": payment["id"],
-        "transaction_id": transaction["id"],
-    }
-
-
-def _format_payment_date(transaction_date: str | None) -> str | None:
-    """UTC-дата транзакции → 'YYYY-MM-DD HH:MM:SS' по Киеву."""
-    parsed = _parse_crm_datetime(transaction_date)
-    if not parsed:
-        return None
-    return parsed.astimezone(KYIV_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 # ---------------------------------------------------------------------------

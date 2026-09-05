@@ -3,7 +3,6 @@
 
 import asyncio
 from datetime import datetime, timedelta
-from html import escape
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
@@ -294,34 +293,6 @@ async def on_create_buyer(callback: CallbackQuery):
         )
 
 
-def _format_payment_note(payment_result: dict) -> str:
-    """Строка о привязке оплаты, которая дописывается к сообщению о создании
-    замовлення в CRM. Для заказов не из Chekly — пустая."""
-    status = payment_result.get("status")
-
-    if status == "attached":
-        amount = payment_result.get("amount") or 0
-        currency = payment_result.get("currency") or "UAH"
-        kind = "часткова" if payment_result.get("is_partial") else "повна"
-        return f"\n💳 Оплату прив'язано: {amount:.2f} {currency} ({kind})"
-
-    if status == "transaction_not_found":
-        return (
-            f"\n⚠️ Оплату не знайдено в CRM за Checkout ID "
-            f"<code>{payment_result.get('checkout_id')}</code> — прив'яжіть вручну"
-        )
-
-    if status == "no_amount":
-        return "\n⚠️ Не вдалося визначити суму оплати — прив'яжіть оплату вручну"
-
-    if status == "error":
-        # текст помилки йде в повідомлення з parse_mode=HTML
-        return f"\n⚠️ Помилка прив'язки оплати: {escape(str(payment_result.get('error')))}"
-
-    # no_checkout_id — старий заказ не з Chekly, нічого не пишемо
-    return ""
-
-
 @router.callback_query(F.data.contains(":create_crm"))
 async def on_create_crm(callback: CallbackQuery):
     """Кнопка 'Створити в CRM' — створює замовлення в keyCRM."""
@@ -346,25 +317,13 @@ async def on_create_crm(callback: CallbackQuery):
     await callback.answer("⏳ Створюю замовлення в CRM...")
 
     try:
-        from app.services.keycrm_service import attach_payment_to_crm_order, create_crm_order
+        from app.services.keycrm_service import create_crm_order
         loop = asyncio.get_event_loop()
 
         # order — detached ORM-об'єкт, всі потрібні атрибути вже завантажені
         result = await loop.run_in_executor(None, create_crm_order, order)
         crm_id = result["id"]
         crm_url = result["url"]
-
-        # Прив'язка оплати Chekly: шукаємо транзакцію за Checkout ID і вішаємо
-        # її на нову оплату замовлення. Помилка тут не скасовує створення замовлення.
-        try:
-            payment_result = await loop.run_in_executor(
-                None, attach_payment_to_crm_order, order, crm_id
-            )
-        except Exception as payment_error:
-            debug_print(f"CRM payment attach failed for order {order_id}: {payment_error}", "ERROR")
-            payment_result = {"status": "error", "error": str(payment_error)}
-
-        payment_note = _format_payment_note(payment_result)
 
         # Зберігаємо CRM ID і будуємо нову клавіатуру всередині сесії (без await)
         new_keyboard = None
@@ -389,8 +348,7 @@ async def on_create_crm(callback: CallbackQuery):
         await callback.bot.send_message(
             callback.message.chat.id,
             f"✅ Замовлення <b>#{order_display}</b> створено в CRM\n"
-            f"🔗 <a href='{crm_url}'>Відкрити в keyCRM</a>"
-            f"{payment_note}",
+            f"🔗 <a href='{crm_url}'>Відкрити в keyCRM</a>",
             parse_mode="HTML",
             disable_web_page_preview=True
         )
