@@ -146,8 +146,10 @@ def _build_shipping_variants(raw: dict, parties: dict) -> list[tuple[str, dict |
     """
     delivery = get_delivery_details(raw)
 
-    # у кур'єра точки видачі немає — вулиця з будинком іде додатковою адресою
-    secondary_line = delivery["courier_address"] or delivery["warehouse_address"]
+    # Додаткова адреса — лише для кур'єра: у нього немає точки видачі.
+    # Для відділення й поштомата адреса складу дублювала б receive_point
+    # (у заповнених вручну замовленнях це поле порожнє)
+    secondary_line = delivery["courier_address"]
 
     base = {}
     for key, value in (

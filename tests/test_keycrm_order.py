@@ -158,6 +158,8 @@ def test_postomat_binds_the_warehouse_like_a_branch(session):
     assert shipping["warehouse_ref"] == "96840b3f-7f22-11ef-98f8-d4f5ef0df2b9"
     assert shipping["delivery_service_id"] == 2
     assert shipping["shipping_receive_point"].startswith('Поштомат "Нова Пошта" №44666')
+    # адреса складу дублювала б точку видачі — keyCRM добудує її сама з ref
+    assert "shipping_secondary_line" not in shipping
 
 
 def test_city_with_a_district_keeps_city_and_region(session):
