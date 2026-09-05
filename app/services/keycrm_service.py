@@ -237,7 +237,7 @@ def _format_manager_comment(raw: dict, tg_comment: str | None = None) -> str:
     buyer_comment = get_buyer_comment(raw)
     if buyer_comment:
         parts.append("")
-        parts.append("Коментар покупця:")
+        parts.append("❗️ Коментар покупця:")
         parts.append(buyer_comment)
 
     line_items = raw.get("line_items") or []
