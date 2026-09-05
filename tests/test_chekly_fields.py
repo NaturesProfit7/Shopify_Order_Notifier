@@ -38,25 +38,25 @@ def test_partial_payment_falls_back_to_note_attribute():
     assert info["outstanding"] == 350.0
 
 
-def test_payment_lines_partial():
-    assert fields.build_payment_lines(order("PARTIAL_SAME_PERSON")) == [
-        "Статус оплати: Частково сплачено",
-        "Передоплата: 200.00 UAH",
-        "Залишок: 350.00 UAH",
+def test_payment_block_partial():
+    assert fields.build_payment_block(order("PARTIAL_SAME_PERSON")) == [
+        ("Статус оплати:", "Частково сплачено"),
+        ("Передоплата:", "200.00 UAH"),
+        ("Залишок:", "350.00 UAH"),
     ]
 
 
-def test_payment_lines_full():
-    assert fields.build_payment_lines(order("PAID_DIFFERENT_PEOPLE")) == [
-        "Статус оплати: Сплачено",
+def test_payment_block_full():
+    assert fields.build_payment_block(order("PAID_DIFFERENT_PEOPLE")) == [
+        ("Статус оплати:", "Сплачено"),
     ]
 
 
-def test_unknown_financial_status_hides_the_line():
+def test_unknown_financial_status_hides_the_block():
     raw = order("PAID_DIFFERENT_PEOPLE")
     raw["financial_status"] = "something_new"
 
-    assert fields.build_payment_lines(raw) == []
+    assert fields.build_payment_block(raw) == []
 
 
 @pytest.mark.parametrize("status,label", [
@@ -92,20 +92,23 @@ def test_different_people_are_taken_from_note_attributes():
     assert parties["recipient"]["phone_e164"] == "+380931112244"
 
 
-def test_customer_line_always_has_name_and_phone():
-    assert fields.build_customer_line(order("PAID_DIFFERENT_PEOPLE")) == (
-        "Замовник: Замовник Тестовий, +380 93 111 22 55"
-    )
-    assert fields.build_customer_line(order("PARTIAL_SAME_PERSON")) == (
-        "Замовник: Тестова Олена, +380 63 111 22 33"
-    )
+def test_customer_block_has_name_phone_and_email():
+    """Замовник — отдельным блоком: заголовок, ФИО, телефон, почта."""
+    assert fields.build_customer_block(order("PAID_DIFFERENT_PEOPLE")) == [
+        ("Замовник:", ""),
+        ("", "Замовник Тестовий"),
+        ("", "+380 93 111 22 55"),
+        ("", "buyer@example.com"),
+    ]
 
 
-def test_customer_line_can_keep_phone_unbreakable():
-    line = fields.build_customer_line(order("PARTIAL_SAME_PERSON"), keep_phone_together=True)
-
-    assert " " in line
-    assert " " not in line.split(", ")[-1]
+def test_customer_block_for_a_single_person():
+    assert fields.build_customer_block(order("PARTIAL_SAME_PERSON")) == [
+        ("Замовник:", ""),
+        ("", "Тестова Олена"),
+        ("", "+380 63 111 22 33"),
+        ("", "test.customer@example.com"),
+    ]
 
 
 def test_given_name_for_greeting():
@@ -117,23 +120,63 @@ def test_given_name_for_greeting():
 
 # --- адрес и доставка ------------------------------------------------------
 
-def test_delivery_lines_use_note_attributes():
-    assert fields.build_delivery_lines(order("PAID_DIFFERENT_PEOPLE")) == [
-        "Тестовий Отримувач",
-        "Відділення №1: вул. Пирогівський шлях, 135",
-        "м. Київ, Київська",
-        "03026",
-        "Ukraine",
-        "+380 93 111 22 44",
-        "buyer@example.com",
+def test_delivery_block_uses_note_attributes():
+    """Отримувач, телефон, відділення і одной строкой місто/індекс/країна."""
+    assert fields.build_delivery_block(order("PAID_DIFFERENT_PEOPLE")) == [
+        ("Доставка:", "Нова Пошта"),
+        ("Адреса доставки:", ""),
+        ("", "Тестовий Отримувач"),
+        ("", "+380 93 111 22 44"),
+        ("", "Відділення №1: вул. Пирогівський шлях, 135"),
+        ("", "м. Київ, Київська, 03026, Ukraine"),
     ]
 
 
-def test_delivery_lines_fall_back_to_address_for_legacy_orders():
+def test_delivery_block_falls_back_to_address_for_legacy_orders():
     raw = order("LEGACY_ORDER")
 
     assert fields.is_chekly_order(raw) is False
-    assert fields.build_delivery_lines(raw)[0] == "Дарія Легасі"
+    assert fields.build_delivery_block(raw) == [
+        ("Доставка:", "Нова Пошта"),
+        ("Адреса доставки:", ""),
+        ("", "Дарія Легасі"),
+        ("", "+380 95 111 22 33"),
+        ("", "Відділення №5"),
+        ("", "Одеса, 65125, Ukraine"),
+    ]
+
+
+def test_header_blocks_order_and_separation():
+    """Порядок блоков шапки: дата → оплата → замовник → доставка."""
+    blocks = fields.build_header_blocks(order("PARTIAL_SAME_PERSON"), "05.09.2026 19:52")
+
+    assert [block[0][0] for block in blocks] == [
+        "Дата:", "Статус оплати:", "Замовник:", "Доставка:",
+    ]
+
+
+def test_header_text_puts_a_blank_line_between_blocks():
+    blocks = fields.build_header_blocks(order("PARTIAL_SAME_PERSON"), "05.09.2026 19:52")
+
+    assert fields.render_header_text(blocks) == [
+        "Дата: 05.09.2026 19:52",
+        "",
+        "Статус оплати: Частково сплачено",
+        "Передоплата: 200.00 UAH",
+        "Залишок: 350.00 UAH",
+        "",
+        "Замовник:",
+        "Тестова Олена",
+        "+380 63 111 22 33",
+        "test.customer@example.com",
+        "",
+        "Доставка: Нова Пошта",
+        "Адреса доставки:",
+        "Тестова Олена",
+        "+380 63 111 22 33",
+        "Відділення №18 (до 30 кг): вул. Фонтанська дорога, 16/8",
+        "м. Одеса, Одеська, 65049, Ukraine",
+    ]
 
 
 def test_delivery_short_for_telegram_card():

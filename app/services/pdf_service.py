@@ -12,18 +12,16 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 
-from app.services.order_fields import (
-    DELIVERY_SERVICE,
-    build_customer_line,
-    build_delivery_lines,
-    build_payment_lines,
-)
+from app.services.order_fields import build_header_blocks
 
 FNT_REGULAR = "DejaVuSans"
 FNT_BOLD = "DejaVuSans-Bold"
 
 # Отступ между текстовой колонкой шапки и логотипом
 BRAND_GAP_MM = 5.0
+
+# Пустая строка между смысловыми блоками шапки
+HEADER_BLOCK_GAP_MM = 3.4
 
 
 # ---------- fonts ----------
@@ -78,15 +76,37 @@ def _wrap_text(c: canvas.Canvas, text: str, x: float, y: float, max_width: float
     return y
 
 
+def _draw_header_line(c: canvas.Canvas, label: str, value: str, x: float, y: float, *,
+                      bold_font: str, font: str, size: int, line_step: float,
+                      width_for, indent: float) -> float:
+    """Строка шапки: заголовок жирным, значение обычным шрифтом следом.
+
+    Заголовок без значения («Замовник:») занимает строку целиком, значение
+    без заголовка — обычная строка данных.
+    """
+    offset = 0.0
+    if label:
+        c.setFont(bold_font, size)
+        c.drawString(x, y, label)
+        if not value:
+            return y - line_step
+        offset = c.stringWidth(f"{label} ", bold_font, size)
+
+    return _wrap_text_dynamic(c, value, x, y, font, size, line_step, width_for,
+                              indent=indent, first_offset=offset)
+
+
 def _wrap_text_dynamic(c: canvas.Canvas, text: str, x: float, y: float,
                        font: str, size: int, line_step: float,
-                       width_for, indent: float = 0.0) -> float:
+                       width_for, indent: float = 0.0,
+                       first_offset: float = 0.0) -> float:
     """Как `_wrap_text`, но доступная ширина зависит от текущей строки.
 
     Нужно для шапки: пока строка идёт напротив логотипа, текст верстается
     в узкую левую колонку, ниже логотипа — на всю ширину страницы.
     `width_for(y)` возвращает доступную ширину для строки с базовой линией `y`,
-    `indent` — втяжка строк переноса.
+    `indent` — втяжка строк переноса, `first_offset` — отступ первой строки
+    (например, под уже нарисованный жирный заголовок).
 
     Разбиваем только по обычным пробелам: неразрывный пробел (U+00A0) держит
     вместе, например, телефон.
@@ -97,7 +117,7 @@ def _wrap_text_dynamic(c: canvas.Canvas, text: str, x: float, y: float,
         return y
 
     line = ""
-    offset = 0.0
+    offset = first_offset
     index = 0
     while index < len(words):
         word = words[index]
@@ -163,13 +183,26 @@ def build_order_pdf(order: dict) -> Tuple[bytes, str]:
     """
     Накладная заказа.
 
-    Шапка (данные берутся из note_attributes Chekly, см. order_fields):
-        Дата: ...
-        Статус оплати: Сплачено / Частково сплачено
-        Передоплата: ... / Залишок: ...   — только при частичной оплате
-        Замовник: ФІО, телефон            — всегда
+    Шапка (данные берутся из note_attributes Chekly, см. order_fields) —
+    заголовки жирным, между блоками пустая строка:
+
+        Дата: 05.09.2026 19:52
+
+        Статус оплати: Частково сплачено
+        Передоплата: 200.00 UAH          — только при частичной оплате
+        Залишок: 350.00 UAH
+
+        Замовник:
+        Ковальова Анна
+        +380 63 317 44 76
+        anakovalova075@gmail.com
+
         Доставка: Нова Пошта
-        Адреса доставки: (отримувач, відділення, місто, індекс, країна, телефон, email)
+        Адреса доставки:
+        Ковальова Анна
+        +380 63 317 44 76
+        Відділення №18 (до 30 кг): вул. Фонтанська дорога, 16/8
+        м. Одеса, Одеська, 65049, Ukraine
 
     Пока строки идут напротив логотипа, они верстаются в узкую левую колонку.
     """
@@ -220,18 +253,16 @@ def build_order_pdf(order: dict) -> Tuple[bytes, str]:
             return right - x0
         return max(brand_x_left - BRAND_GAP_MM * mm - x0, 30 * mm)
 
-    # Шапка
+    # Шапка: заголовки жирным, между смысловыми блоками — пустая строка
     y = top - 10 * mm
-    header_lines = [f"Дата: {created}"]
-    header_lines += build_payment_lines(order)
-    header_lines.append(build_customer_line(order, keep_phone_together=True))
-    header_lines.append(f"Доставка: {DELIVERY_SERVICE}")
-    header_lines.append("Адреса доставки:")
-    header_lines += build_delivery_lines(order)
-
-    for line in header_lines:
-        y = _wrap_text_dynamic(c, line, x0, y, text_font, header_size, header_step,
-                               header_width, indent=6 * mm)
+    for index, block in enumerate(build_header_blocks(order, created)):
+        if index:
+            y -= HEADER_BLOCK_GAP_MM * mm
+        for label, value in block:
+            y = _draw_header_line(c, label, value, x0, y,
+                                  bold_font=title_font, font=text_font,
+                                  size=header_size, line_step=header_step,
+                                  width_for=header_width, indent=6 * mm)
 
     # Товары начинаем ниже логотипа, даже если шапка получилась короткой
     if brand_box is not None:

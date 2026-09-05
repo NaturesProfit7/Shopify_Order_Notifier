@@ -15,10 +15,12 @@ class _CanvasStub:
 
     def __init__(self):
         self.drawn = []
+        self.fonts = []
         self._font_size = 10
 
     def setFont(self, font, size):
         self._font_size = size
+        self.fonts.append(font)
 
     def stringWidth(self, text, font, size):
         return len(text)
@@ -76,17 +78,27 @@ def test_pdf_is_generated(fixture):
     assert filename.endswith(".pdf")
 
 
-def test_pdf_header_lines_in_required_order():
-    """Порядок шапки из ТЗ: дата → оплата → замовник → доставка → адреса."""
-    raw = order("PARTIAL_SAME_PERSON")
-    lines = ["Дата: 05.09.2026 19:52"]
-    lines += pdf_service.build_payment_lines(raw)
-    lines.append(pdf_service.build_customer_line(raw, keep_phone_together=True))
-    lines.append(f"Доставка: {pdf_service.DELIVERY_SERVICE}")
+def test_pdf_draws_labels_in_bold_and_values_in_regular():
+    canvas = _CanvasStub()
 
-    assert [line.split(":")[0] for line in lines] == [
-        "Дата", "Статус оплати", "Передоплата", "Залишок", "Замовник", "Доставка",
-    ]
+    pdf_service._draw_header_line(canvas, "Статус оплати:", "Сплачено", x=0, y=100,
+                                  bold_font="BOLD", font="REG", size=1, line_step=1,
+                                  width_for=lambda y: 100, indent=0)
+
+    # заголовок и значение на одной строке, значение сдвинуто вправо
+    assert [(x, text) for x, _, text in canvas.drawn] == [(0, "Статус оплати:"), (15.0, "Сплачено")]
+    assert canvas.fonts == ["BOLD", "REG"]
+
+
+def test_pdf_header_label_without_value_takes_a_whole_line():
+    canvas = _CanvasStub()
+
+    y = pdf_service._draw_header_line(canvas, "Замовник:", "", x=0, y=100,
+                                      bold_font="BOLD", font="REG", size=1, line_step=7,
+                                      width_for=lambda y: 100, indent=0)
+
+    assert [text for _, _, text in canvas.drawn] == ["Замовник:"]
+    assert y == 93
 
 
 # --- текст клиенту ---------------------------------------------------------
@@ -117,20 +129,30 @@ def test_client_message_hides_payment_line_for_other_statuses():
 
 # --- комментарий менеджера в keyCRM ----------------------------------------
 
-def test_manager_comment_has_new_fields_in_pdf_order():
+def test_manager_comment_head_matches_the_pdf_layout():
     comment = _format_manager_comment(order("PARTIAL_SAME_PERSON"))
-    head = comment.splitlines()[:9]
+    head = comment.splitlines()[:19]
 
     assert head == [
         "Замовлення №4580",
         "",
         "Дата: 05.09.2026 19:52",
+        "",
         "Статус оплати: Частково сплачено",
         "Передоплата: 200.00 UAH",
         "Залишок: 350.00 UAH",
-        "Замовник: Тестова Олена, +380 63 111 22 33",
+        "",
+        "Замовник:",
+        "Тестова Олена",
+        "+380 63 111 22 33",
+        "test.customer@example.com",
+        "",
         "Доставка: Нова Пошта",
         "Адреса доставки:",
+        "Тестова Олена",
+        "+380 63 111 22 33",
+        "Відділення №18 (до 30 кг): вул. Фонтанська дорога, 16/8",
+        "м. Одеса, Одеська, 65049, Ukraine",
     ]
 
 

@@ -9,13 +9,12 @@ from dotenv import load_dotenv
 
 from app.services.order_fields import (
     DELIVERY_SERVICE,
-    get_parties,
-    build_customer_line,
-    build_delivery_lines,
-    build_payment_lines,
+    build_header_blocks,
     format_money,
     get_checkout_id,
+    get_parties,
     get_payment_info,
+    render_header_text,
 )
 
 load_dotenv()
@@ -340,20 +339,9 @@ def _format_manager_comment(raw: dict, tg_comment: str | None = None) -> str:
     parts.append(f"Замовлення №{order_number}")
     parts.append("")
 
+    # Дата / оплата / замовник / доставка — тот же формат и порядок, что в PDF
     created_at = raw.get("created_at", "")
-    if created_at:
-        parts.append(f"Дата: {_format_date(created_at)}")
-
-    # Статус оплати / Передоплата / Залишок — тот же формат, что и в PDF
-    parts.extend(build_payment_lines(raw))
-
-    parts.append(build_customer_line(raw))
-    parts.append(f"Доставка: {DELIVERY_SERVICE}")
-
-    delivery_lines = build_delivery_lines(raw)
-    if delivery_lines:
-        parts.append("Адреса доставки:")
-        parts.extend(delivery_lines)
+    parts.extend(render_header_text(build_header_blocks(raw, _format_date(created_at))))
 
     line_items = raw.get("line_items") or []
     for item in line_items:

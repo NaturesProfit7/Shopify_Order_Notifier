@@ -49,6 +49,11 @@ NA_CHECKOUT_ID = "Checkout id"
 
 _PARTIAL_PAYMENT_PREFIX = "partial payment value"
 
+# Строка шапки документа: (заголовок, значение).
+# Заголовок печатается жирным, значение — обычным шрифтом; любая часть
+# может быть пустой: («Замовник:», "") — заголовок блока, ("", "+380…") — данные.
+HeaderLine = Tuple[str, str]
+
 
 # ---------------------------------------------------------------------------
 # note_attributes
@@ -159,8 +164,8 @@ def get_payment_info(order: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def build_payment_lines(order: Dict[str, Any]) -> List[str]:
-    """Строки для PDF и CRM-комментария:
+def build_payment_block(order: Dict[str, Any]) -> List[HeaderLine]:
+    """Блок оплаты:
 
         Статус оплати: Частково сплачено
         Передоплата: 200.00 UAH
@@ -170,12 +175,12 @@ def build_payment_lines(order: Dict[str, Any]) -> List[str]:
     if not info["label"]:
         return []
 
-    lines = [f"Статус оплати: {info['label']}"]
+    lines: List[HeaderLine] = [("Статус оплати:", info["label"])]
     if info["is_partial"]:
         if info["paid"] is not None:
-            lines.append(f"Передоплата: {format_money(info['paid'], info['currency'])}")
+            lines.append(("Передоплата:", format_money(info["paid"], info["currency"])))
         if info["outstanding"] is not None:
-            lines.append(f"Залишок: {format_money(info['outstanding'], info['currency'])}")
+            lines.append(("Залишок:", format_money(info["outstanding"], info["currency"])))
     return lines
 
 
@@ -317,63 +322,104 @@ def _contact_from_addresses(order: Dict[str, Any]) -> Tuple[str, str, str]:
     return first_name, last_name, phone_e164 or ""
 
 
-def build_customer_line(order: Dict[str, Any], *, keep_phone_together: bool = False) -> str:
-    """Строка «Замовник: ФІО, телефон» — выводится всегда.
+def build_customer_block(order: Dict[str, Any]) -> List[HeaderLine]:
+    """Блок замовника — выводится всегда:
 
-    `keep_phone_together` склеивает телефон неразрывными пробелами, чтобы в PDF
-    он не разрывался переносом строки посреди номера.
+        Замовник:
+        Ковальова Анна
+        +380 63 317 44 76
+        anakovalova075@gmail.com
     """
     customer = get_parties(order)["customer"]
-    phone = customer["phone_pretty"]
-    if keep_phone_together and phone:
-        phone = phone.replace(" ", " ")
 
-    parts = [p for p in (customer["name"], phone) if p]
-    return "Замовник: " + (", ".join(parts) or "—")
+    lines: List[HeaderLine] = [("Замовник:", "")]
+    for value in (customer["name"], customer["phone_pretty"], customer["email"]):
+        if value:
+            lines.append(("", value))
+
+    if len(lines) == 1:
+        lines.append(("", "—"))
+    return lines
 
 
 # ---------------------------------------------------------------------------
 # Адрес доставки
 # ---------------------------------------------------------------------------
 
-def build_delivery_lines(order: Dict[str, Any]) -> List[str]:
-    """Блок «Адреса доставки» — отримувач, отделение, город, индекс, страна,
-    телефон отримувача, email.
+def build_delivery_block(order: Dict[str, Any]) -> List[HeaderLine]:
+    """Блок доставки:
 
-    Для не-Chekly заказов используется старая логика billing/shipping.
+        Доставка: Нова Пошта
+        Адреса доставки:
+        Ковальова Анна
+        +380 63 317 44 76
+        Відділення №18 (до 30 кг): вул. Фонтанська дорога, 16/8
+        м. Одеса, Одеська, 65049, Ukraine
     """
-    if not is_chekly_order(order):
-        from app.services.address_utils import (
-            build_delivery_address_text,
-            get_delivery_and_contact_info,
-        )
+    if is_chekly_order(order):
+        attrs = note_attributes(order)
+        shipping = order.get("shipping_address") or {}
+        recipient = get_parties(order)["recipient"]
 
-        delivery_address, _ = get_delivery_and_contact_info(order)
-        email = (order.get("email") or order.get("contact_email") or "").strip()
-        text = build_delivery_address_text(delivery_address, email=email)
-        return [line for line in text.split("\n") if line.strip()]
+        name = recipient["name"]
+        phone = recipient["phone_pretty"]
+        point = attrs.get(NA_POST_OFFICE) or (shipping.get("address1") or "").strip()
+        extra = ""
+        location = [
+            attrs.get(NA_CITY) or (shipping.get("city") or "").strip(),
+            attrs.get(NA_ZIP) or (shipping.get("zip") or "").strip(),
+            attrs.get(NA_COUNTRY) or (shipping.get("country") or "").strip(),
+        ]
+    else:
+        # Заказы до Chekly: адрес выбирается прежней логикой billing/shipping
+        from app.services.address_utils import get_delivery_and_contact_info
 
-    attrs = note_attributes(order)
-    shipping = order.get("shipping_address") or {}
-    recipient = get_parties(order)["recipient"]
+        address, _ = get_delivery_and_contact_info(order)
+        name = _shipping_full_name(address)
+        phone_e164 = normalize_ua_phone((address.get("phone") or "").strip())
+        phone = pretty_ua_phone(phone_e164) if phone_e164 else (address.get("phone") or "").strip()
+        point = (address.get("address1") or "").strip()
+        extra = (address.get("address2") or "").strip()
+        location = [
+            (address.get("city") or "").strip(),
+            (address.get("zip") or "").strip(),
+            (address.get("country") or "").strip(),
+        ]
 
-    lines: List[str] = []
-    if recipient["name"]:
-        lines.append(recipient["name"])
-
-    for value in (
-        attrs.get(NA_POST_OFFICE) or (shipping.get("address1") or "").strip(),
-        attrs.get(NA_CITY) or (shipping.get("city") or "").strip(),
-        attrs.get(NA_ZIP) or (shipping.get("zip") or "").strip(),
-        attrs.get(NA_COUNTRY) or (shipping.get("country") or "").strip(),
-    ):
+    lines: List[HeaderLine] = [
+        ("Доставка:", DELIVERY_SERVICE),
+        ("Адреса доставки:", ""),
+    ]
+    for value in (name, phone, point, extra, ", ".join(p for p in location if p)):
         if value:
-            lines.append(value)
+            lines.append(("", value))
+    return lines
 
-    if recipient["phone_pretty"]:
-        lines.append(recipient["phone_pretty"])
 
-    lines.append(recipient["email"] or "—")
+def build_header_blocks(order: Dict[str, Any], created: str) -> List[List[HeaderLine]]:
+    """Вся шапка документа блоками — между блоками пустая строка.
+
+    Один и тот же порядок и в PDF, и в комментарии менеджера в keyCRM.
+    """
+    blocks = [[("Дата:", created)]]
+
+    payment = build_payment_block(order)
+    if payment:
+        blocks.append(payment)
+
+    blocks.append(build_customer_block(order))
+    blocks.append(build_delivery_block(order))
+    return blocks
+
+
+def render_header_text(blocks: List[List[HeaderLine]]) -> List[str]:
+    """Блоки шапки в обычный текст (для keyCRM, где нет жирного шрифта)."""
+    lines: List[str] = []
+    for index, block in enumerate(blocks):
+        if index:
+            lines.append("")
+        for label, value in block:
+            lines.append(" ".join(part for part in (label, value) if part))
     return lines
 
 
