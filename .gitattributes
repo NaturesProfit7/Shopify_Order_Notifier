@@ -1,0 +1,10 @@
+# Единые переводы строк в репозитории: в git всегда LF.
+# Иначе работа из Windows/WSL превращает каждый файл в «изменённый целиком».
+* text=auto eol=lf
+
+# Бинарные файлы не трогаем
+*.png binary
+*.jpg binary
+*.webp binary
+*.ttf binary
+*.pdf binary
