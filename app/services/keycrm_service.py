@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 
 from app.services.order_fields import (
     DELIVERY_SERVICE,
-    PICKUP_DELIVERY_TYPES,
     build_header_blocks,
     get_delivery_details,
     format_money,
@@ -140,14 +139,17 @@ def _build_shipping_variants(raw: dict, parties: dict) -> list[dict | None]:
     """
     delivery = get_delivery_details(raw)
 
+    # у кур'єра точки видачі немає — вулиця з будинком іде додатковою адресою
+    secondary_line = delivery["courier_address"] or delivery["warehouse_address"]
+
     base = {}
     for key, value in (
         ("shipping_address_city", delivery["city"]),
         ("shipping_address_region", delivery["region"]),
         ("shipping_address_zip", delivery["zip"]),
         ("shipping_address_country", delivery["country"]),
-        ("shipping_receive_point", delivery["receive_point"]),
-        ("shipping_secondary_line", delivery["secondary_line"]),
+        ("shipping_receive_point", delivery["pickup_point"]),
+        ("shipping_secondary_line", secondary_line),
     ):
         if value:
             base[key] = value
@@ -160,22 +162,18 @@ def _build_shipping_variants(raw: dict, parties: dict) -> list[dict | None]:
 
     text_only = {**base, "shipping_service": DELIVERY_SERVICE} if base else None
 
-    warehouse_ref = delivery["warehouse_ref"]
-    if warehouse_ref:
-        full = {
-            **base,
-            "delivery_service_id": KEYCRM_DELIVERY_SERVICE_ID,
-            "warehouse_ref": warehouse_ref,
-        }
-    else:
-        if delivery["delivery_type"] and delivery["delivery_type"] not in PICKUP_DELIVERY_TYPES:
-            # кур'єр або адресна доставка — складу немає, дивимось на реальних
-            # замовленнях, які атрибути Chekly присилає для цих типів
-            logger.warning(
-                "keyCRM: доставка типу %r без warehouse_ref, атрибути: %s",
-                delivery["delivery_type"], delivery,
-            )
-        full = text_only
+    # Замовлення завжди прив'язуємо до служби доставки НП, а склад — лише коли
+    # він є: у кур'єрській доставці складу немає
+    full = {**base, "delivery_service_id": KEYCRM_DELIVERY_SERVICE_ID} if base else None
+    if full and delivery["warehouse_ref"]:
+        full["warehouse_ref"] = delivery["warehouse_ref"]
+    elif full and not delivery["is_courier"] and delivery["delivery_type"]:
+        # ні складу, ні ознаки кур'єра — новий тип доставки, дивимось у логах,
+        # які атрибути присилає Chekly
+        logger.warning(
+            "keyCRM: доставка типу %r без warehouse_ref, атрибути: %s",
+            delivery["delivery_type"], delivery,
+        )
 
     variants = [full, text_only, None]
     # прибираємо дублі, зберігаючи порядок

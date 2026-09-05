@@ -271,3 +271,46 @@ def test_buyer_comment_from_note_attribute():
 def test_buyer_comment_falls_back_to_order_note():
     assert fields.get_buyer_comment({"note": "з нотаток Shopify"}) == "з нотаток Shopify"
     assert fields.get_buyer_comment(order("PARTIAL_SAME_PERSON")) == ""
+
+
+# --- поштомат і кур'єр ------------------------------------------------------
+
+def test_postomat_point_comes_from_its_own_attribute():
+    """Отделение лежит в `Post Office`, а почтомат — в `Postomat`."""
+    details = fields.get_delivery_details(order("POSTOMAT_ORDER"))
+
+    assert details["pickup_point"].startswith('Поштомат "Нова Пошта" №44666')
+    assert details["warehouse_ref"] == "96840b3f-7f22-11ef-98f8-d4f5ef0df2b9"
+    assert details["is_courier"] is False
+
+
+def test_courier_address_instead_of_a_pickup_point():
+    details = fields.get_delivery_details(order("COURIER_ORDER"))
+
+    assert details["is_courier"] is True
+    assert details["pickup_point"] == ""
+    assert details["warehouse_ref"] == ""
+    assert details["courier_address"] == "вул.1-а Вишнева, буд.12, кв.55"
+    assert details["zip"] == ""
+
+
+def test_courier_address_is_assembled_when_chekly_sends_it_in_parts():
+    raw = order("COURIER_ORDER")
+    raw["note_attributes"] = [
+        na for na in raw["note_attributes"] if na["name"] != "_delivery_courier_address"
+    ]
+
+    assert fields.get_delivery_details(raw)["courier_address"] == "вул. 1-а Вишнева, буд: 12 кв: 55"
+
+
+def test_delivery_block_shows_the_courier_address():
+    block = fields.build_delivery_block(order("COURIER_ORDER"))
+
+    assert ("", "вул.1-а Вишнева, буд.12, кв.55") in block
+    assert ("", "м. Київ, Київська, Ukraine") in block
+
+
+def test_delivery_short_for_a_postomat():
+    assert fields.build_delivery_short(order("POSTOMAT_ORDER")).startswith(
+        "с. Абазівка, Полтавський, Полтавська, Поштомат"
+    )

@@ -47,13 +47,18 @@ NA_ZIP = "_zip-code"
 NA_COUNTRY = "_country"
 NA_CHECKOUT_ID = "Checkout id"
 NA_COMMENT = "Comment"
+NA_POSTOMAT = "Postomat"
 NA_DELIVERY_TYPE = "_delivery_type"
+NA_WAREHOUSE = "_delivery_warehouse"
 NA_WAREHOUSE_REF = "_delivery_warehouse_Ref"
 NA_WAREHOUSE_ADDRESS = "_delivery_warehouse_address"
+NA_COURIER_ADDRESS = "_delivery_courier_address"
+NA_STREET = "Street"
+NA_HOUSE = "House"
 
-# Типы доставки Chekly, у которых есть отделение/почтомат с UUID Нової Пошти.
-# Курьер и адресная доставка сюда не попадают — у них ref'а нет.
-PICKUP_DELIVERY_TYPES = {"branch", "postomat", "poshtomat", "warehouse"}
+# Курьерская доставка: склада нет, есть улица с домом.
+# У отделения и почтомата `_delivery_type` одинаковый — «branch».
+COURIER_DELIVERY_TYPES = {"courier", "address", "door"}
 
 _PARTIAL_PAYMENT_PREFIX = "partial payment value"
 
@@ -389,14 +394,16 @@ def build_delivery_block(order: Dict[str, Any]) -> List[HeaderLine]:
         shipping = order.get("shipping_address") or {}
         recipient = get_parties(order)["recipient"]
 
+        delivery = get_delivery_details(order)
         name = recipient["name"]
         phone = recipient["phone_pretty"]
-        point = attrs.get(NA_POST_OFFICE) or (shipping.get("address1") or "").strip()
+        # відділення, поштомат або адреса кур'єрської доставки
+        point = delivery["pickup_point"] or delivery["courier_address"]
         extra = ""
         location = [
             attrs.get(NA_CITY) or (shipping.get("city") or "").strip(),
-            attrs.get(NA_ZIP) or (shipping.get("zip") or "").strip(),
-            attrs.get(NA_COUNTRY) or (shipping.get("country") or "").strip(),
+            delivery["zip"],
+            delivery["country"],
         ]
     else:
         # Заказы до Chekly: адрес выбирается прежней логикой billing/shipping
@@ -461,34 +468,58 @@ def get_delivery_details(order: Dict[str, Any]) -> Dict[str, str]:
     attrs = note_attributes(order)
     shipping = order.get("shipping_address") or {}
 
-    city_raw = attrs.get(NA_CITY) or (shipping.get("city") or "").strip()
-    city, separator, region = city_raw.rpartition(",")
-    if not separator:
-        city, region = region, ""
+    # «м. Київ, Київська» → місто + область
+    # «с. Абазівка, Полтавський, Полтавська» → місто + район + область
+    parts = [p.strip() for p in (attrs.get(NA_CITY) or (shipping.get("city") or "")).split(",") if p.strip()]
+    city = parts[0] if parts else ""
+    region = parts[-1] if len(parts) > 1 else ""
 
     delivery_type = attrs.get(NA_DELIVERY_TYPE, "")
+    is_courier = delivery_type in COURIER_DELIVERY_TYPES
     warehouse_ref = attrs.get(NA_WAREHOUSE_REF, "")
 
     return {
-        "city": city.strip(),
-        "region": region.strip() or (shipping.get("province") or "").strip(),
+        "city": city,
+        "region": region or (shipping.get("province") or "").strip(),
         "zip": attrs.get(NA_ZIP) or (shipping.get("zip") or "").strip(),
         "country": attrs.get(NA_COUNTRY) or (shipping.get("country") or "").strip(),
-        "receive_point": attrs.get(NA_POST_OFFICE) or (shipping.get("address1") or "").strip(),
-        "secondary_line": attrs.get(NA_WAREHOUSE_ADDRESS) or (shipping.get("address2") or "").strip(),
+        "pickup_point": "" if is_courier else _pickup_point(attrs, shipping),
+        "courier_address": _courier_address(attrs) if is_courier else "",
+        "warehouse_address": attrs.get(NA_WAREHOUSE_ADDRESS, ""),
         "delivery_type": delivery_type,
-        # ref отдаём только для точек выдачи: у курьерской доставки его нет,
-        # а чужой ref сломает привязку склада
-        "warehouse_ref": warehouse_ref if delivery_type in PICKUP_DELIVERY_TYPES else "",
+        "is_courier": is_courier,
+        # у кур'єрської доставки складу немає, чужий ref зламав би прив'язку
+        "warehouse_ref": "" if is_courier else warehouse_ref,
     }
+
+
+def _pickup_point(attrs: Dict[str, str], shipping: Dict[str, Any]) -> str:
+    """Отделение или почтомат: Chekly кладёт их в разные атрибуты."""
+    return (
+        attrs.get(NA_POST_OFFICE)
+        or attrs.get(NA_POSTOMAT)
+        or attrs.get(NA_WAREHOUSE)
+        or (shipping.get("address1") or "").strip()
+    )
+
+
+def _courier_address(attrs: Dict[str, str]) -> str:
+    """Адрес курьерской доставки: улица, дом, квартира."""
+    ready = attrs.get(NA_COURIER_ADDRESS)
+    if ready:
+        return ready
+
+    parts = [attrs.get(NA_STREET, ""), attrs.get(NA_HOUSE, "")]
+    return ", ".join(p.strip(" ,") for p in parts if p.strip(" ,"))
 
 
 def build_delivery_short(order: Dict[str, Any]) -> str:
     """Короткий адрес одной строкой для карточки в Telegram."""
     attrs = note_attributes(order)
     shipping = order.get("shipping_address") or {}
+    delivery = get_delivery_details(order)
 
     city = attrs.get(NA_CITY) or (shipping.get("city") or "").strip()
-    point = attrs.get(NA_POST_OFFICE) or (shipping.get("address1") or "").strip()
+    point = delivery["pickup_point"] or delivery["courier_address"]
 
     return ", ".join(p for p in (city, point) if p)

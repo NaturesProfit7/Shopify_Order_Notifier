@@ -138,9 +138,44 @@ def test_server_errors_are_not_retried(session):
 
 
 def test_legacy_orders_send_plain_address(session):
+    """У старых заказов нет ref склада, но служба доставки та же."""
     _create("LEGACY_ORDER", "3475")
 
     shipping = session.post_calls[0][1]["shipping"]
     assert "warehouse_ref" not in shipping
-    assert shipping["shipping_service"] == "Нова Пошта"
+    assert shipping["delivery_service_id"] == 2
     assert shipping["shipping_address_city"] == "Одеса"
+    assert shipping["shipping_receive_point"] == "Відділення №5"
+
+
+# --- поштомат і кур'єр ------------------------------------------------------
+
+def test_postomat_binds_the_warehouse_like_a_branch(session):
+    """У почтомата тот же _delivery_type «branch» и свой warehouse_ref."""
+    _create("POSTOMAT_ORDER", "4586")
+
+    shipping = session.post_calls[0][1]["shipping"]
+    assert shipping["warehouse_ref"] == "96840b3f-7f22-11ef-98f8-d4f5ef0df2b9"
+    assert shipping["delivery_service_id"] == 2
+    assert shipping["shipping_receive_point"].startswith('Поштомат "Нова Пошта" №44666')
+
+
+def test_city_with_a_district_keeps_city_and_region(session):
+    """«с. Абазівка, Полтавський, Полтавська» — район между городом и областью."""
+    _create("POSTOMAT_ORDER", "4586")
+
+    shipping = session.post_calls[0][1]["shipping"]
+    assert shipping["shipping_address_city"] == "с. Абазівка"
+    assert shipping["shipping_address_region"] == "Полтавська"
+
+
+def test_courier_goes_without_a_warehouse(session):
+    """У курьера склада нет — улица уходит дополнительной адресой."""
+    _create("COURIER_ORDER", "4587")
+
+    shipping = session.post_calls[0][1]["shipping"]
+    assert "warehouse_ref" not in shipping
+    assert "shipping_receive_point" not in shipping
+    assert shipping["shipping_secondary_line"] == "вул.1-а Вишнева, буд.12, кв.55"
+    # до служби доставки замовлення все одно прив'язуємо
+    assert shipping["delivery_service_id"] == 2

@@ -7,6 +7,8 @@
 
 * PARTIAL_SAME_PERSON — частичная оплата, замовник = отримувач
 * PAID_DIFFERENT_PEOPLE — полная оплата, замовник ≠ отримувач
+* POSTOMAT_ORDER — почтомат: точка выдачи в `Postomat`, в городе есть район
+* COURIER_ORDER — курьер: склада нет, адрес улицей, индекса нет
 """
 from __future__ import annotations
 
@@ -160,6 +162,105 @@ PAID_DIFFERENT_PEOPLE: Dict[str, Any] = {
             "properties": [],
         }
     ],
+}
+
+# Почтомат: `_delivery_type` тот же «branch», но точка выдачи лежит в
+# атрибуте `Postomat`, а не `Post Office`, и в городе есть район.
+POSTOMAT_ORDER: Dict[str, Any] = {
+    "id": 7441887790586,
+    "order_number": "4586",
+    "created_at": "2026-09-06T11:20:00+03:00",
+    "currency": "UAH",
+    "email": "buyer@example.com",
+    "phone": "+380931110047",
+    "financial_status": "paid",
+    "total_price": "1.00",
+    "total_outstanding": "0.00",
+    "shipping_lines": [],
+    "billing_address": None,
+    "shipping_address": {
+        "zip": "38715",
+        "city": "с. Абазівка, Полтавський, Полтавська",
+        "phone": "+380931110046",
+        "country": "Ukraine",
+        "address1": "Поштомат \"Нова Пошта\" №44666: вул. Білоуська, 4А",
+        "last_name": "Бумбер",
+        "first_name": "Чимбер",
+    },
+    "customer": {"first_name": "Чимбер", "last_name": "Бумбер"},
+    "note_attributes": [
+        _note("Recipient Name", "Бумбер Чимбер"),
+        _note("Recipient Phone", "+380931110046"),
+        _note("Customer Phone", "+380931110047"),
+        _note("Customer Name", "Плямбер Тимбер"),
+        _note("Customer Email", "buyer@example.com"),
+        _note("Delivery Method", "Нова пошта"),
+        _note("City", "с. Абазівка, Полтавський, Полтавська"),
+        _note("Postomat", "Поштомат \"Нова Пошта\" №44666: вул. Білоуська, 4А"),
+        _note("_zip-code", "38715"),
+        _note("Payment", "Monobank"),
+        _note("Comment", "Заказ почтомат"),
+        _note("_provider", "Нова пошта"),
+        _note("_country", "Ukraine"),
+        _note("_delivery_type", "branch"),
+        _note("_delivery_method", "Відділення / Поштомат"),
+        _note("_delivery_warehouse", "Поштомат \"Нова Пошта\" №44666: вул. Білоуська, 4А"),
+        _note("_delivery_warehouse_address", "Абазівка, вул. Білоуська, 4А"),
+        _note("_delivery_warehouse_Number", "44666"),
+        _note("_delivery_warehouse_Ref", "96840b3f-7f22-11ef-98f8-d4f5ef0df2b9"),
+        _note("Checkout id", "1db77b99-08da-4149-89c0-fb705488251d"),
+    ],
+    "line_items": [{"title": "тест", "quantity": 1, "price": "1.00", "variant_title": None, "properties": []}],
+}
+
+# Курьер: склада нет, адрес в `_delivery_courier_address`, индекса нет вовсе.
+COURIER_ORDER: Dict[str, Any] = {
+    "id": 7441887790587,
+    "order_number": "4587",
+    "created_at": "2026-09-06T11:40:00+03:00",
+    "currency": "UAH",
+    "email": "buyer@example.com",
+    "phone": "+380931110077",
+    "financial_status": "paid",
+    "total_price": "1.00",
+    "total_outstanding": "0.00",
+    "shipping_lines": [],
+    "billing_address": None,
+    "shipping_address": {
+        "zip": None,
+        "city": "м. Київ, Київська",
+        "phone": "+380931110066",
+        "country": "Ukraine",
+        "address1": "вул.1-а Вишнева, буд.12, кв.55",
+        "last_name": "Каки",
+        "first_name": "Кики",
+    },
+    "customer": {"first_name": "Кики", "last_name": "Каки"},
+    "note_attributes": [
+        _note("Recipient Name", "Каки Кики Сергіївна"),
+        _note("Recipient Phone", "+380931110066"),
+        _note("Customer Phone", "+380931110077"),
+        _note("Customer Name", "Пумби Чамби"),
+        _note("Customer Email", "buyer@example.com"),
+        _note("Delivery Method", "Нова пошта"),
+        _note("City", "м. Київ, Київська"),
+        _note("Street", "вул. 1-а Вишнева"),
+        _note("House", "буд: 12 кв: 55"),
+        _note("Payment", "Monobank"),
+        _note("Comment", "Заказ курьер"),
+        _note("_provider", "Нова пошта"),
+        _note("_country", "Ukraine"),
+        _note("_delivery_type", "courier"),
+        _note("_delivery_method", "Адресна курʼєрська доставка"),
+        _note("_delivery_city", "м. Київ, Київська обл."),
+        _note("_delivery_courier_address", "вул.1-а Вишнева, буд.12, кв.55"),
+        _note("_delivery_street", "вул.1-а Вишнева"),
+        _note("_delivery_street_Ref", "ef905acd-e1f4-11e5-899e-005056887b8d"),
+        _note("_delivery_house", ", буд.12"),
+        _note("_delivery_flat", ", кв.55"),
+        _note("Checkout id", "968145a8-da40-4b60-9c5d-65d6ba88fddb"),
+    ],
+    "line_items": [{"title": "тест", "quantity": 1, "price": "1.00", "variant_title": None, "properties": []}],
 }
 
 # Старый заказ (до Chekly): shipping_lines заполнены, note_attributes нет
