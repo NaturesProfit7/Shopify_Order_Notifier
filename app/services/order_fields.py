@@ -347,10 +347,9 @@ def build_customer_block(order: Dict[str, Any]) -> List[HeaderLine]:
 # ---------------------------------------------------------------------------
 
 def build_delivery_block(order: Dict[str, Any]) -> List[HeaderLine]:
-    """Блок доставки:
+    """Блок доставки — отримувач с адресом идут сразу под способом доставки:
 
         Доставка: Нова Пошта
-        Адреса доставки:
         Ковальова Анна
         +380 63 317 44 76
         Відділення №18 (до 30 кг): вул. Фонтанська дорога, 16/8
@@ -386,10 +385,7 @@ def build_delivery_block(order: Dict[str, Any]) -> List[HeaderLine]:
             (address.get("country") or "").strip(),
         ]
 
-    lines: List[HeaderLine] = [
-        ("Доставка:", DELIVERY_SERVICE),
-        ("Адреса доставки:", ""),
-    ]
+    lines: List[HeaderLine] = [("Доставка:", DELIVERY_SERVICE)]
     for value in (name, phone, point, extra, ", ".join(p for p in location if p)):
         if value:
             lines.append(("", value))

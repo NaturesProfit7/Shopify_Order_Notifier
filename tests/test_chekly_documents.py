@@ -131,7 +131,7 @@ def test_client_message_hides_payment_line_for_other_statuses():
 
 def test_manager_comment_head_matches_the_pdf_layout():
     comment = _format_manager_comment(order("PARTIAL_SAME_PERSON"))
-    head = comment.splitlines()[:19]
+    head = comment.splitlines()[:18]
 
     assert head == [
         "Замовлення №4580",
@@ -148,7 +148,6 @@ def test_manager_comment_head_matches_the_pdf_layout():
         "test.customer@example.com",
         "",
         "Доставка: Нова Пошта",
-        "Адреса доставки:",
         "Тестова Олена",
         "+380 63 111 22 33",
         "Відділення №18 (до 30 кг): вул. Фонтанська дорога, 16/8",

@@ -124,7 +124,6 @@ def test_delivery_block_uses_note_attributes():
     """Отримувач, телефон, відділення і одной строкой місто/індекс/країна."""
     assert fields.build_delivery_block(order("PAID_DIFFERENT_PEOPLE")) == [
         ("Доставка:", "Нова Пошта"),
-        ("Адреса доставки:", ""),
         ("", "Тестовий Отримувач"),
         ("", "+380 93 111 22 44"),
         ("", "Відділення №1: вул. Пирогівський шлях, 135"),
@@ -138,7 +137,6 @@ def test_delivery_block_falls_back_to_address_for_legacy_orders():
     assert fields.is_chekly_order(raw) is False
     assert fields.build_delivery_block(raw) == [
         ("Доставка:", "Нова Пошта"),
-        ("Адреса доставки:", ""),
         ("", "Дарія Легасі"),
         ("", "+380 95 111 22 33"),
         ("", "Відділення №5"),
@@ -171,7 +169,6 @@ def test_header_text_puts_a_blank_line_between_blocks():
         "test.customer@example.com",
         "",
         "Доставка: Нова Пошта",
-        "Адреса доставки:",
         "Тестова Олена",
         "+380 63 111 22 33",
         "Відділення №18 (до 30 кг): вул. Фонтанська дорога, 16/8",
