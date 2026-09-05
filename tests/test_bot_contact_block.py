@@ -1,8 +1,8 @@
 # tests/test_bot_contact_block.py
-"""Верх карточки заказа: замовник и, если он не получатель, отдельно отримувач."""
+"""Верх карточки заказа и комментарий покупателя в сообщениях бота."""
 from types import SimpleNamespace
 
-from app.bot.services.message_builder import build_contact_block, build_recipient_line
+from app.bot.services.message_builder import build_buyer_comment_line, build_contact_block
 from app.services.order_fields import get_order_contact
 from tests.fixtures.chekly_orders import order
 
@@ -19,16 +19,15 @@ def _order(fixture):
     )
 
 
-def test_contact_block_shows_both_people_when_they_differ():
+def test_contact_block_shows_the_customer():
+    """В карточке — замовник; отримувача здесь не показываем."""
     assert build_contact_block(_order("PAID_DIFFERENT_PEOPLE")) == (
-        "👤 <b>Замовник:</b> Замовник Тестовий\n"
-        "📱 +380931112255\n"
-        "📦 <b>Отримувач:</b> Тестовий Отримувач • +380931112244"
+        "👤 Тестовий Замовник\n📱 +380931112255"
     )
+    assert "Отримувач" not in build_contact_block(_order("PAID_DIFFERENT_PEOPLE"))
 
 
-def test_contact_block_unchanged_for_a_single_person():
-    """Обычный заказ — без подписи «Замовник» и без строки отримувача."""
+def test_contact_block_for_a_single_person():
     assert build_contact_block(_order("PARTIAL_SAME_PERSON")) == (
         "👤 Олена Тестова\n📱 +380631112233"
     )
@@ -40,8 +39,27 @@ def test_contact_block_for_legacy_orders():
     )
 
 
-def test_recipient_line_only_for_split_orders():
-    assert build_recipient_line(order("PAID_DIFFERENT_PEOPLE")) is not None
-    assert build_recipient_line(order("PARTIAL_SAME_PERSON")) is None
-    assert build_recipient_line(order("LEGACY_ORDER")) is None
-    assert build_recipient_line(None) is None
+# --- комментарий покупателя ------------------------------------------------
+
+def test_buyer_comment_line():
+    assert build_buyer_comment_line(order("PAID_DIFFERENT_PEOPLE")) == (
+        "📝 <b>Коментар покупця:</b> Тестовий коментар до великого замовлення"
+    )
+
+
+def test_no_line_when_buyer_left_no_comment():
+    assert build_buyer_comment_line(order("PARTIAL_SAME_PERSON")) is None
+    assert build_buyer_comment_line(None) is None
+
+
+def test_buyer_comment_falls_back_to_shopify_note():
+    assert build_buyer_comment_line({"note": "з нотаток Shopify"}) == (
+        "📝 <b>Коментар покупця:</b> з нотаток Shopify"
+    )
+
+
+def test_buyer_comment_is_html_escaped():
+    """Текст пишет покупатель, а сообщение уходит с parse_mode=HTML."""
+    line = build_buyer_comment_line({"note": "<b>шрифт</b> & <script>"})
+
+    assert "&lt;b&gt;шрифт&lt;/b&gt; &amp; &lt;script&gt;" in line

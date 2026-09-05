@@ -46,6 +46,7 @@ NA_POST_OFFICE = "Post Office"
 NA_ZIP = "_zip-code"
 NA_COUNTRY = "_country"
 NA_CHECKOUT_ID = "Checkout id"
+NA_COMMENT = "Comment"
 
 _PARTIAL_PAYMENT_PREFIX = "partial payment value"
 
@@ -86,6 +87,15 @@ def is_chekly_order(order: Dict[str, Any]) -> bool:
 def get_checkout_id(order: Dict[str, Any]) -> Optional[str]:
     """Checkout id платёжки — по нему ищем транзакцию в keyCRM."""
     return note_attr(order, NA_CHECKOUT_ID) or None
+
+
+def get_buyer_comment(order: Dict[str, Any]) -> str:
+    """Комментарий покупателя из оформления заказа.
+
+    Chekly кладёт его в note_attribute `Comment`; в админке Shopify это же
+    поле видно как «Примечания» (`order.note`).
+    """
+    return note_attr(order, NA_COMMENT) or (order.get("note") or "").strip()
 
 
 # ---------------------------------------------------------------------------
@@ -245,17 +255,29 @@ def _party(name: str, phone: str, email: str) -> Dict[str, str]:
     }
 
 
-def get_customer_given_name(order: Dict[str, Any]) -> str:
-    """Имя замовника для обращения «Вітаю, …».
+def split_chekly_name(full_name: str) -> Tuple[str, str]:
+    """Разбирает имя из note_attributes Chekly на (имя, фамилию).
 
-    Chekly-заказы с отдельным замовником: первое слово `Customer Name`.
-    Иначе — `shipping_address.first_name` (Shopify разбирает строку имени
-    сам и на реальных заказах отдаёт именно имя, а не фамилию).
+    Chekly отдаёт имя одной строкой в порядке «Прізвище Ім'я»: это видно из
+    того, как ту же строку разбирает Shopify — для `Recipient Name` =
+    «Ковальова Анна» в shipping_address приходит first_name «Анна»,
+    last_name «Ковальова». То есть имя — последнее слово строки.
     """
+    parts = (full_name or "").split()
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[-1], " ".join(parts[:-1])
+
+
+def get_customer_given_name(order: Dict[str, Any]) -> str:
+    """Имя замовника для обращения «Вітаю, …»."""
     customer_name = note_attr(order, NA_CUSTOMER_NAME)
     if customer_name:
-        return customer_name.split()[0]
+        return split_chekly_name(customer_name)[0]
 
+    # Замовник = отримувач: Shopify уже разобрал строку имени за нас
     shipping = order.get("shipping_address") or {}
     first_name = (shipping.get("first_name") or "").strip()
     if first_name:
@@ -263,7 +285,7 @@ def get_customer_given_name(order: Dict[str, Any]) -> str:
 
     recipient_name = note_attr(order, NA_RECIPIENT_NAME)
     if recipient_name:
-        return recipient_name.split()[0]
+        return split_chekly_name(recipient_name)[0]
 
     customer = order.get("customer") or {}
     return (customer.get("first_name") or "").strip()
@@ -283,13 +305,13 @@ def get_order_contact(order: Dict[str, Any]) -> Tuple[str, str, str]:
 
     if customer_name:
         # Chekly прислал отдельного замовника — значит получатель другой человек
-        first_name, _, last_name = customer_name.partition(" ")
+        first_name, last_name = split_chekly_name(customer_name)
         phone = (
             normalize_ua_phone(attrs.get(NA_CUSTOMER_PHONE) or "")
             or normalize_ua_phone(order.get("phone") or "")
             or ""
         )
-        return first_name.strip(), last_name.strip(), phone
+        return first_name, last_name, phone
 
     return _contact_from_addresses(order)
 

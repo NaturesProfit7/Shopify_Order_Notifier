@@ -5,12 +5,14 @@ from datetime import datetime, timedelta
 
 import pytz
 import requests
+from urllib.parse import urljoin
 from dotenv import load_dotenv
 
 from app.services.order_fields import (
     DELIVERY_SERVICE,
     build_header_blocks,
     format_money,
+    get_buyer_comment,
     get_checkout_id,
     get_parties,
     get_payment_info,
@@ -121,6 +123,11 @@ def create_crm_order(order) -> dict:
         "manager_comment": _format_manager_comment(raw, order.comment),
     }
 
+    # Коментар покупця з оформлення замовлення — в окреме поле keyCRM
+    buyer_comment = get_buyer_comment(raw)
+    if buyer_comment:
+        body["buyer_comment"] = buyer_comment
+
     # Покупець у CRM — замовник. Якщо посилку отримує інша людина, віддаємо її
     # окремо: keyCRM підставляє ці поля в ТТН
     if not parties["same"]:
@@ -229,6 +236,35 @@ def find_external_transaction(checkout_id: str, order_created_at: str | None = N
     return None
 
 
+def _post_json(url: str, body: dict) -> dict:
+    """POST в keyCRM, устойчивый к редиректам.
+
+    При 301/302/303 requests меняет метод на GET и повторяет запрос — keyCRM
+    в ответ говорит «The GET method is not supported… Supported methods: POST».
+    Поэтому редиректы не отдаём библиотеке, а повторяем POST сами.
+    """
+    response = _session.post(url, json=body, timeout=30, allow_redirects=False)
+
+    for _ in range(3):
+        if not response.is_redirect:
+            break
+        location = response.headers.get("Location")
+        if not location:
+            break
+        url = urljoin(url, location)
+        logger.info("keyCRM: redirect on POST, repeating as POST to %s", url)
+        response = _session.post(url, json=body, timeout=30, allow_redirects=False)
+
+    if not response.ok:
+        # тело ответа keyCRM объясняет причину гораздо лучше, чем статус
+        raise requests.HTTPError(
+            f"{response.status_code} {response.reason} for {url}: {response.text[:500]}",
+            response=response,
+        )
+
+    return response.json()
+
+
 def create_order_payment(crm_order_id: int, amount: float, description: str | None = None,
                          payment_date: str | None = None) -> dict:
     """Создаёт оплату у замовлення в keyCRM. Возвращает объект оплаты."""
@@ -242,11 +278,7 @@ def create_order_payment(crm_order_id: int, amount: float, description: str | No
     if payment_date:
         body["payment_date"] = payment_date
 
-    response = _session.post(
-        f"{KEYCRM_BASE_URL}/order/{crm_order_id}/payment", json=body, timeout=30
-    )
-    response.raise_for_status()
-    return response.json()
+    return _post_json(f"{KEYCRM_BASE_URL}/order/{crm_order_id}/payment", body)
 
 
 def attach_transaction_to_payment(payment_id: int, transaction: dict) -> None:
@@ -255,12 +287,7 @@ def attach_transaction_to_payment(payment_id: int, transaction: dict) -> None:
     if transaction.get("uuid"):
         body["transaction_uuid"] = str(transaction["uuid"])
 
-    response = _session.post(
-        f"{KEYCRM_BASE_URL}/payments/{payment_id}/external-transactions",
-        json=body,
-        timeout=30,
-    )
-    response.raise_for_status()
+    _post_json(f"{KEYCRM_BASE_URL}/payments/{payment_id}/external-transactions", body)
 
 
 def attach_payment_to_crm_order(order, crm_order_id: int) -> dict:
@@ -342,6 +369,13 @@ def _format_manager_comment(raw: dict, tg_comment: str | None = None) -> str:
     # Дата / оплата / замовник / доставка — тот же формат и порядок, что в PDF
     created_at = raw.get("created_at", "")
     parts.extend(render_header_text(build_header_blocks(raw, _format_date(created_at))))
+
+    # Коментар покупця дублюємо в текст — щоб менеджер точно його побачив
+    buyer_comment = get_buyer_comment(raw)
+    if buyer_comment:
+        parts.append("")
+        parts.append("Коментар покупця:")
+        parts.append(buyer_comment)
 
     line_items = raw.get("line_items") or []
     for item in line_items:

@@ -1,9 +1,11 @@
 # app/bot/services/message_builder.py
 from app.models import Order, OrderStatus
+from html import escape
+
 from app.services.order_fields import (
     build_delivery_short,
     format_money,
-    get_parties,
+    get_buyer_comment,
     get_payment_info,
 )
 
@@ -57,44 +59,25 @@ def format_phone_compact(e164: str) -> str:
     return e164  # Просто E.164 без изменений: +380960790247
 
 
-def build_recipient_line(raw_json: dict | None) -> str | None:
-    """Строка отримувача — только когда посылку получает не сам замовник.
-
-    📦 <b>Отримувач:</b> Марія Іваненко • +380931062030
-    """
-    if not raw_json:
+def build_buyer_comment_line(raw_json: dict | None) -> str | None:
+    """Комментарий, который покупатель оставил при оформлении заказа."""
+    comment = get_buyer_comment(raw_json or {})
+    if not comment:
         return None
 
-    parties = get_parties(raw_json)
-    if parties["same"]:
-        return None
-
-    recipient = parties["recipient"]
-    parts = [p for p in (recipient["name"], recipient["phone_e164"] or recipient["phone"]) if p]
-    if not parts:
-        return None
-
-    return f"📦 <b>Отримувач:</b> {' • '.join(parts)}"
+    # текст приходит от покупателя, а сообщение уходит с parse_mode=HTML
+    return f"📝 <b>Коментар покупця:</b> {escape(comment)}"
 
 
 def build_contact_block(order: Order) -> str:
-    """Верх карточки: замовник и, если он не получатель, отдельно отримувач.
+    """Верх карточки: замовник — тот, кто оформил и оплатил заказ.
 
-    👤 <b>Замовник:</b> Оксана Петренко
-    📱 +380931062033
-    📦 <b>Отримувач:</b> Марія Іваненко • +380931062030
+    Отримувача здесь не показываем: он есть в PDF и в комментарии keyCRM.
     """
     customer_name = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
     phone = format_phone_compact(order.customer_phone_e164)
 
-    recipient_line = build_recipient_line(order.raw_json)
-    # Подписываем «Замовник», только когда в заказе двое — иначе это лишний шум
-    customer_label = "<b>Замовник:</b> " if recipient_line else ""
-
-    block = f"👤 {customer_label}{customer_name}\n📱 {phone}"
-    if recipient_line:
-        block += f"\n{recipient_line}"
-    return block
+    return f"👤 {customer_name}\n📱 {phone}"
 
 
 def build_order_message(order: Order, detailed: bool = False) -> str:
@@ -147,6 +130,11 @@ def build_order_message(order: Order, detailed: bool = False) -> str:
         payment_line = build_payment_line(data)
         if payment_line:
             message += f"\n{payment_line}"
+
+        # Комментарий покупателя из оформления заказа
+        comment_line = build_buyer_comment_line(data)
+        if comment_line:
+            message += f"\n{comment_line}"
 
     # Дополнительная информация (если есть)
     if order.comment or order.reminder_at or order.processed_by_username:

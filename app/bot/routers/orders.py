@@ -13,6 +13,7 @@ from app.models import Order, OrderStatus, OrderStatusHistory
 from app.bot.services.message_builder import (
     get_status_emoji,
     get_status_text,
+    build_buyer_comment_line,
     build_contact_block,
     build_payment_line,
     DIVIDER,
@@ -91,6 +92,11 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
         payment_line = build_payment_line(data)
         if payment_line:
             message += f"\n{payment_line}"
+
+        # Комментарий покупателя из оформления заказа
+        comment_line = build_buyer_comment_line(data)
+        if comment_line:
+            message += f"\n{comment_line}"
 
     message += f"\n{DIVIDER}"
 

@@ -106,7 +106,7 @@ def test_pdf_header_label_without_value_takes_a_whole_line():
 def test_client_message_for_full_payment():
     text = render_client_order_accepted(order("PAID_DIFFERENT_PEOPLE"))
 
-    assert text.startswith("Вітаю, Замовник ☺️\nОтримали ваше замовлення №4582\n")
+    assert text.startswith("Вітаю, Тестовий ☺️\nОтримали ваше замовлення №4582\n")
     assert "Статус оплати: повна передоплата" in text
     assert "Максимальний термін виготовлення складає 7 днів" in text
     assert "Передаємо в роботу, мирного дня 🙏" in text

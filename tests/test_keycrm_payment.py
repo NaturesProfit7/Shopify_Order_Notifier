@@ -12,6 +12,13 @@ CHECKOUT_ID = "e092a38a-3327-4ec2-a24d-0bacca9c97d9"
 
 
 class _Response:
+    is_redirect = False
+    ok = True
+    status_code = 200
+    reason = "OK"
+    headers: dict = {}
+    text = ""
+
     def __init__(self, payload):
         self._payload = payload
 
@@ -42,7 +49,7 @@ class _SessionStub:
         has_next = page < len(self.pages)
         return _Response({"data": data, "next_page_url": "next" if has_next else None})
 
-    def post(self, url, json=None, timeout=None):
+    def post(self, url, json=None, timeout=None, allow_redirects=True):
         self.post_calls.append((url, json or {}))
         if url.endswith("/payment"):
             return _Response({"id": 999})
@@ -197,7 +204,7 @@ def test_crm_order_sends_customer_as_buyer_and_recipient_separately(session):
 
     _, body = session.post_calls[0]
     assert body["buyer"] == {
-        "full_name": "Замовник Тестовий",
+        "full_name": "Тестовий Замовник",
         "phone": "+380931112255",
         "email": "buyer@example.com",
     }

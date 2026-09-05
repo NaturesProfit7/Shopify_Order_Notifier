@@ -113,7 +113,7 @@ def test_customer_block_for_a_single_person():
 
 def test_given_name_for_greeting():
     # замовник отдельно — берём первое слово Customer Name
-    assert fields.get_customer_given_name(order("PAID_DIFFERENT_PEOPLE")) == "Замовник"
+    assert fields.get_customer_given_name(order("PAID_DIFFERENT_PEOPLE")) == "Тестовий"
     # один человек — берём разбор имени от Shopify
     assert fields.get_customer_given_name(order("PARTIAL_SAME_PERSON")) == "Олена"
 
@@ -200,7 +200,7 @@ def test_delivery_service_is_always_nova_poshta():
 def test_order_contact_is_the_customer_not_the_recipient():
     """Заказчик и получатель разные — в БД должен попасть заказчик."""
     assert fields.get_order_contact(order("PAID_DIFFERENT_PEOPLE")) == (
-        "Замовник", "Тестовий", "+380931112255",
+        "Тестовий", "Замовник", "+380931112255",
     )
 
 
@@ -224,4 +224,50 @@ def test_order_contact_falls_back_to_order_phone():
         na for na in raw["note_attributes"] if na["name"] != "Customer Phone"
     ]
 
-    assert fields.get_order_contact(raw) == ("Замовник", "Тестовий", "+380931112255")
+    assert fields.get_order_contact(raw) == ("Тестовий", "Замовник", "+380931112255")
+
+
+# --- имя из строки Chekly --------------------------------------------------
+
+def test_chekly_name_is_surname_then_given_name():
+    """Chekly отдаёт имя строкой «Прізвище Ім'я» — имя идёт последним.
+
+    Видно по тому, как ту же строку разбирает Shopify: для Recipient Name
+    «Ковальова Анна» в shipping_address приходит first_name «Анна».
+    """
+    assert fields.split_chekly_name("Ковальова Анна") == ("Анна", "Ковальова")
+    assert fields.split_chekly_name("Тарасенко Анна Марія") == ("Марія", "Тарасенко Анна")
+    assert fields.split_chekly_name("Анна") == ("Анна", "")
+    assert fields.split_chekly_name("") == ("", "")
+
+
+def test_greeting_uses_the_given_name_of_a_separate_customer():
+    raw = order("PAID_DIFFERENT_PEOPLE")
+    for note in raw["note_attributes"]:
+        if note["name"] == "Customer Name":
+            note["value"] = "Ковальова Анна"
+
+    assert fields.get_customer_given_name(raw) == "Анна"
+
+
+def test_contact_of_a_separate_customer_keeps_name_order():
+    """В БД имя и фамилия ложатся правильно, а не как в строке Chekly."""
+    raw = order("PAID_DIFFERENT_PEOPLE")
+    for note in raw["note_attributes"]:
+        if note["name"] == "Customer Name":
+            note["value"] = "Ковальова Анна"
+
+    assert fields.get_order_contact(raw)[:2] == ("Анна", "Ковальова")
+
+
+# --- комментарий покупателя ------------------------------------------------
+
+def test_buyer_comment_from_note_attribute():
+    assert fields.get_buyer_comment(order("PAID_DIFFERENT_PEOPLE")) == (
+        "Тестовий коментар до великого замовлення"
+    )
+
+
+def test_buyer_comment_falls_back_to_order_note():
+    assert fields.get_buyer_comment({"note": "з нотаток Shopify"}) == "з нотаток Shopify"
+    assert fields.get_buyer_comment(order("PARTIAL_SAME_PERSON")) == ""
