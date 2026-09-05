@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from app.services.order_fields import (
     DELIVERY_SERVICE,
+    get_parties,
     build_customer_line,
     build_delivery_lines,
     build_payment_lines,
@@ -64,7 +65,8 @@ def create_crm_buyer(order) -> dict:
     full_name = f"{first_name} {last_name}".strip() or "Без імені"
 
     phone = order.customer_phone_e164 or None
-    email = raw.get("email") or None
+    # пошта замовника, а не отримувача
+    email = get_parties(raw)["customer"]["email"] or raw.get("email") or None
 
     body = {"full_name": full_name}
     if phone:
@@ -105,7 +107,9 @@ def create_crm_order(order) -> dict:
     first_name = (order.customer_first_name or "").strip()
     last_name = (order.customer_last_name or "").strip()
     full_name = f"{first_name} {last_name}".strip() or "Без імені"
-    email = raw.get("email") or None
+
+    parties = get_parties(raw)
+    email = parties["customer"]["email"] or raw.get("email") or None
 
     body = {
         "source_id": KEYCRM_SOURCE_ID,
@@ -117,6 +121,16 @@ def create_crm_order(order) -> dict:
         },
         "manager_comment": _format_manager_comment(raw, order.comment),
     }
+
+    # Покупець у CRM — замовник. Якщо посилку отримує інша людина, віддаємо її
+    # окремо: keyCRM підставляє ці поля в ТТН
+    if not parties["same"]:
+        recipient = parties["recipient"]
+        body["shipping"] = {
+            "shipping_service": DELIVERY_SERVICE,
+            "recipient_full_name": recipient["name"] or None,
+            "recipient_phone": recipient["phone_e164"] or recipient["phone"] or None,
+        }
 
     response = _session.post(f"{KEYCRM_BASE_URL}/order", json=body, timeout=30)
     response.raise_for_status()

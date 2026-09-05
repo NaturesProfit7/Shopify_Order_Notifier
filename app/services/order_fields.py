@@ -16,7 +16,7 @@ Chekly кладёт всю полезную информацию в `note_attrib
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.phone_utils import normalize_ua_phone, pretty_ua_phone
 
@@ -262,6 +262,59 @@ def get_customer_given_name(order: Dict[str, Any]) -> str:
 
     customer = order.get("customer") or {}
     return (customer.get("first_name") or "").strip()
+
+
+def get_order_contact(order: Dict[str, Any]) -> Tuple[str, str, str]:
+    """Кого бот считает клиентом заказа — **замовника**, то есть того, кто
+    оформил и оплатил. Возвращает (first_name, last_name, phone_e164) для
+    полей `customer_*` в БД: карточка бота, VCF, покупець у keyCRM.
+
+    Если замовник и отримувач — один человек (обычный заказ), работает прежняя
+    логика адресов: Shopify сам разбирает строку имени и на реальных заказах
+    отдаёт имя и фамилию в правильном порядке.
+    """
+    attrs = note_attributes(order)
+    customer_name = attrs.get(NA_CUSTOMER_NAME)
+
+    if customer_name:
+        # Chekly прислал отдельного замовника — значит получатель другой человек
+        first_name, _, last_name = customer_name.partition(" ")
+        phone = (
+            normalize_ua_phone(attrs.get(NA_CUSTOMER_PHONE) or "")
+            or normalize_ua_phone(order.get("phone") or "")
+            or ""
+        )
+        return first_name.strip(), last_name.strip(), phone
+
+    return _contact_from_addresses(order)
+
+
+def _contact_from_addresses(order: Dict[str, Any]) -> Tuple[str, str, str]:
+    """Прежняя логика: контакт из billing/shipping адресов заказа."""
+    from app.services.address_utils import (
+        get_contact_name,
+        get_contact_phone_e164,
+        get_delivery_and_contact_info,
+    )
+
+    _, contact_info = get_delivery_and_contact_info(order)
+    first_name, last_name = get_contact_name(contact_info)
+
+    customer = order.get("customer") or {}
+    if not first_name and not last_name:
+        first_name = (customer.get("first_name") or "").strip()
+        last_name = (customer.get("last_name") or "").strip()
+
+    phone_e164 = get_contact_phone_e164(contact_info)
+    if not phone_e164:
+        default_addr = customer.get("default_address") or {}
+        for phone_source in (customer.get("phone"), order.get("phone"), default_addr.get("phone")):
+            if phone_source and str(phone_source).strip():
+                phone_e164 = normalize_ua_phone(str(phone_source).strip())
+                if phone_e164:
+                    break
+
+    return first_name, last_name, phone_e164 or ""
 
 
 def build_customer_line(order: Dict[str, Any], *, keep_phone_together: bool = False) -> str:

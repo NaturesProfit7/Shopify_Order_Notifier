@@ -13,6 +13,7 @@ from app.models import Order, OrderStatus, OrderStatusHistory
 from app.bot.services.message_builder import (
     get_status_emoji,
     get_status_text,
+    build_contact_block,
     build_payment_line,
     DIVIDER,
 )
@@ -54,13 +55,9 @@ def build_order_card_message(order: Order, detailed: bool = False) -> str:
     status_emoji = get_status_emoji(order.status)
     status_text = get_status_text(order.status)
 
-    customer_name = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
-    phone = format_phone_compact(order.customer_phone_e164)
-
     message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} {status_text}
 {DIVIDER}
-👤 {customer_name}
-📱 {phone}"""
+{build_contact_block(order)}"""
 
     if detailed and order.raw_json:
         data = order.raw_json

@@ -153,3 +153,35 @@ def test_delivery_service_is_always_nova_poshta():
     """Chekly не заполняет shipping_lines — способ доставки у нас один."""
     assert fields.DELIVERY_SERVICE == "Нова Пошта"
     assert order("PAID_DIFFERENT_PEOPLE")["shipping_lines"] == []
+
+
+# --- кого бот считает клиентом заказа --------------------------------------
+
+def test_order_contact_is_the_customer_not_the_recipient():
+    """Заказчик и получатель разные — в БД должен попасть заказчик."""
+    assert fields.get_order_contact(order("PAID_DIFFERENT_PEOPLE")) == (
+        "Замовник", "Тестовий", "+380931112255",
+    )
+
+
+def test_order_contact_unchanged_when_one_person():
+    """Обычный заказ — прежнее поведение, разбор имени от Shopify."""
+    assert fields.get_order_contact(order("PARTIAL_SAME_PERSON")) == (
+        "Олена", "Тестова", "+380631112233",
+    )
+
+
+def test_order_contact_for_legacy_orders():
+    assert fields.get_order_contact(order("LEGACY_ORDER")) == (
+        "Дарія", "Легасі", "+380951112233",
+    )
+
+
+def test_order_contact_falls_back_to_order_phone():
+    """Chekly прислал замовника без телефона — берём телефон заказа."""
+    raw = order("PAID_DIFFERENT_PEOPLE")
+    raw["note_attributes"] = [
+        na for na in raw["note_attributes"] if na["name"] != "Customer Phone"
+    ]
+
+    assert fields.get_order_contact(raw) == ("Замовник", "Тестовий", "+380931112255")

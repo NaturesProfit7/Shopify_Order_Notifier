@@ -7,9 +7,8 @@ from fastapi import FastAPI, Request, HTTPException
 import hmac, hashlib, base64
 from app.config import get_shopify_webhook_secret
 
-from app.services.phone_utils import normalize_ua_phone
-from app.services.address_utils import get_delivery_and_contact_info, get_contact_name, get_contact_phone_e164, \
-    addresses_are_same
+from app.services.address_utils import addresses_are_same
+from app.services.order_fields import get_order_contact
 
 from app.db import get_session
 from app.models import Order, OrderStatus
@@ -78,40 +77,14 @@ app = FastAPI(
 
 def _extract_customer_data_new_logic(order: dict) -> tuple[str, str, str]:
     """
-    НОВАЯ ЛОГИКА: извлекает данные контактного лица с учетом разных адресов.
+    Контактное лицо заказа — замовник (тот, кто оформил и оплатил).
     Возвращает (first_name, last_name, phone_e164).
+
+    Логика вынесена в app/services/order_fields.get_order_contact():
+    для заказов Chekly с отдельным замовником берётся он, иначе работает
+    прежний разбор billing/shipping адресов.
     """
-    # Получаем контактную информацию
-    _, contact_info = get_delivery_and_contact_info(order)
-
-    # Извлекаем имя контактного лица
-    first_name, last_name = get_contact_name(contact_info)
-
-    # Если нет имени в контактной информации - пробуем customer
-    if not first_name and not last_name:
-        cust = order.get("customer", {})
-        first_name = (cust.get("first_name") or "").strip()
-        last_name = (cust.get("last_name") or "").strip()
-
-    # Извлекаем телефон контактного лица
-    phone_e164 = get_contact_phone_e164(contact_info)
-
-    # Если нет телефона в контактной информации - пробуем другие источники
-    if not phone_e164:
-        cust = order.get("customer", {})
-        default_addr = cust.get("default_address", {})
-
-        for phone_source in [
-            cust.get("phone"),
-            order.get("phone"),
-            default_addr.get("phone"),
-        ]:
-            if phone_source and str(phone_source).strip():
-                phone_e164 = normalize_ua_phone(str(phone_source).strip())
-                if phone_e164:
-                    break
-
-    return first_name, last_name, phone_e164 or ""
+    return get_order_contact(order)
 
 
 def _display_order_number(order: dict, fallback_id: int | str) -> str:

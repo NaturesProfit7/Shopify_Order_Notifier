@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.services import keycrm_service as crm
+from app.services.order_fields import get_order_contact
 from tests.fixtures.chekly_orders import order
 
 CHECKOUT_ID = "e092a38a-3327-4ec2-a24d-0bacca9c97d9"
@@ -181,3 +182,41 @@ def test_legacy_order_without_checkout_id_is_skipped(session):
 def test_payment_date_is_converted_to_kyiv_time():
     assert crm._format_payment_date("2026-09-05T19:40:29.000000Z") == "2026-09-05 22:40:29"
     assert crm._format_payment_date(None) is None
+
+
+# --- покупець і отримувач у замовленні --------------------------------------
+
+def test_crm_order_sends_customer_as_buyer_and_recipient_separately(session):
+    raw = order("PAID_DIFFERENT_PEOPLE")
+    first_name, last_name, phone = get_order_contact(raw)
+    crm.create_crm_order(SimpleNamespace(
+        id=1, order_number="4582", comment=None, raw_json=raw,
+        customer_first_name=first_name, customer_last_name=last_name,
+        customer_phone_e164=phone,
+    ))
+
+    _, body = session.post_calls[0]
+    assert body["buyer"] == {
+        "full_name": "Замовник Тестовий",
+        "phone": "+380931112255",
+        "email": "buyer@example.com",
+    }
+    assert body["shipping"] == {
+        "shipping_service": "Нова Пошта",
+        "recipient_full_name": "Тестовий Отримувач",
+        "recipient_phone": "+380931112244",
+    }
+
+
+def test_crm_order_has_no_shipping_block_for_a_single_person(session):
+    raw = order("PARTIAL_SAME_PERSON")
+    first_name, last_name, phone = get_order_contact(raw)
+    crm.create_crm_order(SimpleNamespace(
+        id=1, order_number="4580", comment=None, raw_json=raw,
+        customer_first_name=first_name, customer_last_name=last_name,
+        customer_phone_e164=phone,
+    ))
+
+    _, body = session.post_calls[0]
+    assert "shipping" not in body
+    assert body["buyer"]["full_name"] == "Олена Тестова"

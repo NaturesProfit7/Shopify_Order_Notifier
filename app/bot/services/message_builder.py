@@ -1,6 +1,11 @@
 # app/bot/services/message_builder.py
 from app.models import Order, OrderStatus
-from app.services.order_fields import build_delivery_short, format_money, get_payment_info
+from app.services.order_fields import (
+    build_delivery_short,
+    format_money,
+    get_parties,
+    get_payment_info,
+)
 
 # Using a simple hyphen line avoids rendering issues across devices
 DIVIDER = "-" * 5
@@ -52,6 +57,46 @@ def format_phone_compact(e164: str) -> str:
     return e164  # Просто E.164 без изменений: +380960790247
 
 
+def build_recipient_line(raw_json: dict | None) -> str | None:
+    """Строка отримувача — только когда посылку получает не сам замовник.
+
+    📦 <b>Отримувач:</b> Марія Іваненко • +380931062030
+    """
+    if not raw_json:
+        return None
+
+    parties = get_parties(raw_json)
+    if parties["same"]:
+        return None
+
+    recipient = parties["recipient"]
+    parts = [p for p in (recipient["name"], recipient["phone_e164"] or recipient["phone"]) if p]
+    if not parts:
+        return None
+
+    return f"📦 <b>Отримувач:</b> {' • '.join(parts)}"
+
+
+def build_contact_block(order: Order) -> str:
+    """Верх карточки: замовник и, если он не получатель, отдельно отримувач.
+
+    👤 <b>Замовник:</b> Оксана Петренко
+    📱 +380931062033
+    📦 <b>Отримувач:</b> Марія Іваненко • +380931062030
+    """
+    customer_name = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
+    phone = format_phone_compact(order.customer_phone_e164)
+
+    recipient_line = build_recipient_line(order.raw_json)
+    # Подписываем «Замовник», только когда в заказе двое — иначе это лишний шум
+    customer_label = "<b>Замовник:</b> " if recipient_line else ""
+
+    block = f"👤 {customer_label}{customer_name}\n📱 {phone}"
+    if recipient_line:
+        block += f"\n{recipient_line}"
+    return block
+
+
 def build_order_message(order: Order, detailed: bool = False) -> str:
     """
     Построить сообщение о заказе в едином формате.
@@ -61,17 +106,10 @@ def build_order_message(order: Order, detailed: bool = False) -> str:
     status_emoji = get_status_emoji(order.status)
     status_text = get_status_text(order.status)
 
-    # Имя клиента
-    customer_name = f"{order.customer_first_name or ''} {order.customer_last_name or ''}".strip() or "Без імені"
-
-    # Телефон БЕЗ пробелов
-    phone = format_phone_compact(order.customer_phone_e164)
-
     # Основное сообщение
     message = f"""📦 <b>Замовлення #{order_no}</b> • {status_emoji} {status_text}
 {DIVIDER}
-👤 {customer_name}
-📱 {phone}"""
+{build_contact_block(order)}"""
 
     # Детальная информация (если запрошено и есть данные)
     if detailed and order.raw_json:

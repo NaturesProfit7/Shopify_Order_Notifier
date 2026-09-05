@@ -83,45 +83,14 @@ def _update_order_fields(order: Order, data: dict) -> None:
     # Номер заказа
     order.order_number = str(data.get("order_number") or data.get("id") or "")
 
-    # НОВАЯ ЛОГИКА: используем исправленную функцию извлечения контактных данных
-    from app.services.address_utils import get_delivery_and_contact_info, get_contact_name, get_contact_phone_e164
+    # Контакт заказа — замовник (для Chekly-заказов с отдельным замовником),
+    # иначе прежний разбор billing/shipping адресов
+    from app.services.order_fields import get_order_contact
 
-    # Получаем контактную информацию с учетом логики адресов
-    _, contact_info = get_delivery_and_contact_info(data)
+    contact_first_name, contact_last_name, phone_e164 = get_order_contact(data)
 
-    # Извлекаем имя и фамилию контактного лица
-    contact_first_name, contact_last_name = get_contact_name(contact_info)
-
-    # Если в контактной информации нет имени - пробуем customer как fallback
-    if not contact_first_name and not contact_last_name:
-        customer = data.get("customer") or {}
-        contact_first_name = (customer.get("first_name") or "").strip()
-        contact_last_name = (customer.get("last_name") or "").strip()
-
-    # Сохраняем контактные данные в заказ
     order.customer_first_name = (contact_first_name or "")[:100]
     order.customer_last_name = (contact_last_name or "")[:100]
-
-    # Извлекаем телефон контактного лица
-    phone_e164 = get_contact_phone_e164(contact_info)
-
-    # Если в контактной информации нет телефона - пробуем другие источники
-    if not phone_e164:
-        from app.services.phone_utils import normalize_ua_phone
-
-        customer = data.get("customer") or {}
-        default_addr = customer.get("default_address") or {}
-
-        # Проверяем различные источники телефона
-        for phone_source in [
-            customer.get("phone"),
-            data.get("phone"),
-            default_addr.get("phone"),
-        ]:
-            if phone_source and str(phone_source).strip():
-                phone_e164 = normalize_ua_phone(str(phone_source).strip())
-                if phone_e164:
-                    break
 
     if phone_e164:
         order.customer_phone_e164 = phone_e164[:32]
