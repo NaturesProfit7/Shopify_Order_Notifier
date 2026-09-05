@@ -88,3 +88,12 @@ def test_no_shipping_note_when_order_has_no_address():
     from app.bot.routers.management import _format_shipping_note
 
     assert _format_shipping_note({"shipping_kind": "empty", "shipping_degraded": False}) == ""
+
+
+def test_shipping_note_for_courier_is_not_a_warning_after_fallback():
+    """Кур'єрський адрес міг лягти в запасне поле — це не привід лякати."""
+    from app.bot.routers.management import _format_shipping_note
+
+    note = _format_shipping_note({"shipping_kind": "courier", "shipping_degraded": True})
+
+    assert note == "\n\n📍 Адресу кур'єрської доставки перенесено"

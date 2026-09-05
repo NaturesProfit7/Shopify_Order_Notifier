@@ -146,19 +146,15 @@ def _build_shipping_variants(raw: dict, parties: dict) -> list[tuple[str, dict |
     """
     delivery = get_delivery_details(raw)
 
-    # Додаткова адреса — лише для кур'єра: у нього немає точки видачі.
-    # Для відділення й поштомата адреса складу дублювала б receive_point
-    # (у заповнених вручну замовленнях це поле порожнє)
-    secondary_line = delivery["courier_address"]
-
     base = {}
     for key, value in (
         ("shipping_address_city", delivery["city"]),
         ("shipping_address_region", delivery["region"]),
         ("shipping_address_zip", delivery["zip"]),
         ("shipping_address_country", delivery["country"]),
+        # для відділення й поштомата адресу складу окремо не шлемо: вона
+        # дублювала б точку видачі, keyCRM добудує її сама з warehouse_ref
         ("shipping_receive_point", delivery["pickup_point"]),
-        ("shipping_secondary_line", secondary_line),
     ):
         if value:
             base[key] = value
@@ -169,37 +165,35 @@ def _build_shipping_variants(raw: dict, parties: dict) -> list[tuple[str, dict |
         base["recipient_full_name"] = recipient["name"] or None
         base["recipient_phone"] = recipient["phone_e164"] or recipient["phone"] or None
 
-    text_only = {**base, "shipping_service": DELIVERY_SERVICE} if base else None
-
-    # Замовлення завжди прив'язуємо до служби доставки НП, а склад — лише коли
-    # він є: у кур'єрській доставці складу немає
-    full = {**base, "delivery_service_id": KEYCRM_DELIVERY_SERVICE_ID} if base else None
-    if full and delivery["warehouse_ref"]:
-        full["warehouse_ref"] = delivery["warehouse_ref"]
-    elif full and not delivery["is_courier"] and delivery["delivery_type"]:
-        # ні складу, ні ознаки кур'єра — новий тип доставки, дивимось у логах,
-        # які атрибути присилає Chekly
-        logger.warning(
-            "keyCRM: доставка типу %r без warehouse_ref, атрибути: %s",
-            delivery["delivery_type"], delivery,
-        )
-
-    if full is None:
+    if not base:
         return [("empty", None)]
 
-    if delivery["warehouse_ref"]:
-        best = "warehouse"
-    elif delivery["is_courier"]:
-        best = "courier"
-    else:
-        best = "address"
+    with_service = {**base, "delivery_service_id": KEYCRM_DELIVERY_SERVICE_ID}
+    variants: list[tuple[str, dict | None]] = []
 
-    variants = [(best, full), ("address", text_only), ("none", None)]
-    # прибираємо дублі, зберігаючи порядок
-    unique: list[tuple[str, dict | None]] = []
-    for kind, variant in unique_by_body(variants):
-        unique.append((kind, variant))
-    return unique
+    if delivery["warehouse_ref"]:
+        variants.append(("warehouse", {**with_service, "warehouse_ref": delivery["warehouse_ref"]}))
+    elif delivery["is_courier"]:
+        address = delivery["courier_address"]
+        # `shipping_address` — поле «Адрес» у діалозі доставки. В документації
+        # його немає (тільки у відповіді API), тому за ним іде запасний варіант
+        # через `shipping_secondary_line` — «Доп. адрес», який точно приймається
+        variants.append(("courier", {**with_service, "shipping_address": address}))
+        variants.append(("courier", {**with_service, "shipping_secondary_line": address}))
+    else:
+        if delivery["delivery_type"]:
+            # ні складу, ні ознаки кур'єра — новий тип доставки, дивимось
+            # у логах, які атрибути присилає Chekly
+            logger.warning(
+                "keyCRM: доставка типу %r без warehouse_ref, атрибути: %s",
+                delivery["delivery_type"], delivery,
+            )
+        # прив'язувати нічого, але замовлення все одно їде Новою Поштою
+        variants.append(("address", with_service))
+
+    variants.append(("address", {**base, "shipping_service": DELIVERY_SERVICE}))
+    variants.append(("none", None))
+    return unique_by_body(variants)
 
 
 def unique_by_body(variants: list[tuple[str, dict | None]]) -> list[tuple[str, dict | None]]:

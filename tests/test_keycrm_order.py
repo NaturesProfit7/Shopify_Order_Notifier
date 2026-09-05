@@ -171,16 +171,30 @@ def test_city_with_a_district_keeps_city_and_region(session):
     assert shipping["shipping_address_region"] == "Полтавська"
 
 
-def test_courier_goes_without_a_warehouse(session):
-    """У курьера склада нет — улица уходит дополнительной адресой."""
+def test_courier_address_goes_into_the_address_field(session):
+    """У курьера склада нет — улица уходит в поле «Адрес»."""
     _create("COURIER_ORDER", "4587")
 
     shipping = session.post_calls[0][1]["shipping"]
     assert "warehouse_ref" not in shipping
     assert "shipping_receive_point" not in shipping
-    assert shipping["shipping_secondary_line"] == "вул.1-а Вишнева, буд.12, кв.55"
+    assert shipping["shipping_address"] == "вул.1-а Вишнева, буд.12, кв.55"
     # до служби доставки замовлення все одно прив'язуємо
     assert shipping["delivery_service_id"] == 2
+
+
+def test_courier_falls_back_to_the_secondary_line(session):
+    """`shipping_address` не описан в документации — если CRM его не примет,
+    адрес уходит в «Доп. адрес», как раньше."""
+    session.failures = [422]
+
+    result = _create("COURIER_ORDER", "4587")
+
+    assert result["shipping_kind"] == "courier"
+    assert len(session.post_calls) == 2
+    assert session.post_calls[1][1]["shipping"]["shipping_secondary_line"] == (
+        "вул.1-а Вишнева, буд.12, кв.55"
+    )
 
 
 # --- звіт про перенесення адреси -------------------------------------------

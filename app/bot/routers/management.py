@@ -298,19 +298,22 @@ def _format_shipping_note(result: dict) -> str:
     созданном замовленні через пустую строку."""
     kind = result.get("shipping_kind")
 
-    if result.get("shipping_degraded"):
-        if kind == "address":
-            return "\n\n⚠️ Адресу перенесено текстом, без прив'язки відділення"
-        return "\n\n⚠️ Адресу доставки перенести не вдалося"
-
     if kind == "warehouse":
         return "\n\n📍 Адресу доставки перенесено, відділення прив'язано"
+
     if kind == "courier":
         return "\n\n📍 Адресу кур'єрської доставки перенесено"
+
     if kind == "address":
+        # відкат сюди з прив'язки складу — менеджеру доведеться обрати його руками
+        if result.get("shipping_degraded"):
+            return "\n\n⚠️ Адресу перенесено текстом, без прив'язки відділення"
         return "\n\n📍 Адресу доставки перенесено"
 
-    # empty / none — адреси в замовленні не було
+    if kind == "none":
+        return "\n\n⚠️ Адресу доставки перенести не вдалося"
+
+    # empty — адреси в замовленні не було
     return ""
 
 
