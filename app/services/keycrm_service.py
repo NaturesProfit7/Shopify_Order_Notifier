@@ -9,7 +9,9 @@ from dotenv import load_dotenv
 
 from app.services.order_fields import (
     DELIVERY_SERVICE,
+    PICKUP_DELIVERY_TYPES,
     build_header_blocks,
+    get_delivery_details,
     format_money,
     get_buyer_comment,
     get_checkout_id,
@@ -27,6 +29,10 @@ KEYCRM_SOURCE_ID = int(os.getenv("KEYCRM_SOURCE_ID", "2"))
 KEYCRM_BASE_URL = "https://openapi.keycrm.app/v1"
 KEYCRM_APP_URL = "https://timosh-design.keycrm.app/app/orders/view"
 KEYCRM_BUYER_URL = "https://timosh-design.keycrm.app/app/clients"
+
+# «Новая почта фоп» в справочнике служб доставки keyCRM
+# (GET /order/delivery-service), source_name = novaposhta
+KEYCRM_DELIVERY_SERVICE_ID = int(os.getenv("KEYCRM_DELIVERY_SERVICE_ID", "2"))
 
 COMMENT_DIVIDER = "———"
 
@@ -116,21 +122,102 @@ def create_crm_order(order) -> dict:
     if buyer_comment:
         body["buyer_comment"] = buyer_comment
 
-    # Покупець у CRM — замовник. Якщо посилку отримує інша людина, віддаємо її
-    # окремо: keyCRM підставляє ці поля в ТТН
+    # Адреса доставки і отримувач. Пробуємо від найповнішого варіанту до
+    # найпростішого: якщо keyCRM не прийме прив'язку складу — замовлення все
+    # одно створиться, максимум без неї (див. _create_order_with_fallback)
+    shipping_variants = _build_shipping_variants(raw, parties)
+
+    crm_id = _create_order_with_fallback(body, shipping_variants)
+    return {"id": crm_id, "url": f"{KEYCRM_APP_URL}/{crm_id}"}
+
+
+def _build_shipping_variants(raw: dict, parties: dict) -> list[dict | None]:
+    """Варианты блока `shipping` от полного к пустому.
+
+    1. привязка склада Нової Пошти (`delivery_service_id` + `warehouse_ref`)
+    2. тот же адрес текстом, без привязки
+    3. без блока доставки вообще
+    """
+    delivery = get_delivery_details(raw)
+
+    base = {}
+    for key, value in (
+        ("shipping_address_city", delivery["city"]),
+        ("shipping_address_region", delivery["region"]),
+        ("shipping_address_zip", delivery["zip"]),
+        ("shipping_address_country", delivery["country"]),
+        ("shipping_receive_point", delivery["receive_point"]),
+        ("shipping_secondary_line", delivery["secondary_line"]),
+    ):
+        if value:
+            base[key] = value
+
+    # Отримувача віддаємо тільки якщо він не замовник — так у документації
     if not parties["same"]:
         recipient = parties["recipient"]
-        body["shipping"] = {
-            "shipping_service": DELIVERY_SERVICE,
-            "recipient_full_name": recipient["name"] or None,
-            "recipient_phone": recipient["phone_e164"] or recipient["phone"] or None,
+        base["recipient_full_name"] = recipient["name"] or None
+        base["recipient_phone"] = recipient["phone_e164"] or recipient["phone"] or None
+
+    text_only = {**base, "shipping_service": DELIVERY_SERVICE} if base else None
+
+    warehouse_ref = delivery["warehouse_ref"]
+    if warehouse_ref:
+        full = {
+            **base,
+            "delivery_service_id": KEYCRM_DELIVERY_SERVICE_ID,
+            "warehouse_ref": warehouse_ref,
         }
+    else:
+        if delivery["delivery_type"] and delivery["delivery_type"] not in PICKUP_DELIVERY_TYPES:
+            # кур'єр або адресна доставка — складу немає, дивимось на реальних
+            # замовленнях, які атрибути Chekly присилає для цих типів
+            logger.warning(
+                "keyCRM: доставка типу %r без warehouse_ref, атрибути: %s",
+                delivery["delivery_type"], delivery,
+            )
+        full = text_only
 
-    response = _session.post(f"{KEYCRM_BASE_URL}/order", json=body, timeout=30)
-    response.raise_for_status()
+    variants = [full, text_only, None]
+    # прибираємо дублі, зберігаючи порядок
+    unique: list[dict | None] = []
+    for variant in variants:
+        if variant not in unique:
+            unique.append(variant)
+    return unique
 
-    crm_id = response.json()["id"]
-    return {"id": crm_id, "url": f"{KEYCRM_APP_URL}/{crm_id}"}
+
+def _create_order_with_fallback(body: dict, shipping_variants: list[dict | None]) -> int:
+    """Создаёт замовлення, отступая к более простому блоку доставки.
+
+    Повторяем только на ошибках валидации (4xx) — при 5xx или обрыве сети
+    замовлення могло создаться, и повтор сделал бы дубль.
+    """
+    last_response = None
+
+    for attempt, shipping in enumerate(shipping_variants):
+        payload = {**body}
+        if shipping:
+            payload["shipping"] = shipping
+        else:
+            payload.pop("shipping", None)
+
+        response = _session.post(f"{KEYCRM_BASE_URL}/order", json=payload, timeout=30)
+        if response.ok:
+            if attempt:
+                logger.warning("keyCRM: замовлення створено з варіантом доставки №%s", attempt + 1)
+            return response.json()["id"]
+
+        last_response = response
+        if not 400 <= response.status_code < 500:
+            break
+
+        logger.warning(
+            "keyCRM: варіант доставки №%s відхилено (%s): %s",
+            attempt + 1, response.status_code, response.text[:300],
+        )
+
+    last_response.raise_for_status()
+    raise RuntimeError("keyCRM: не вдалося створити замовлення")
 
 
 # ---------------------------------------------------------------------------

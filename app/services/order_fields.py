@@ -47,6 +47,13 @@ NA_ZIP = "_zip-code"
 NA_COUNTRY = "_country"
 NA_CHECKOUT_ID = "Checkout id"
 NA_COMMENT = "Comment"
+NA_DELIVERY_TYPE = "_delivery_type"
+NA_WAREHOUSE_REF = "_delivery_warehouse_Ref"
+NA_WAREHOUSE_ADDRESS = "_delivery_warehouse_address"
+
+# Типы доставки Chekly, у которых есть отделение/почтомат с UUID Нової Пошти.
+# Курьер и адресная доставка сюда не попадают — у них ref'а нет.
+PICKUP_DELIVERY_TYPES = {"branch", "postomat", "poshtomat", "warehouse"}
 
 _PARTIAL_PAYMENT_PREFIX = "partial payment value"
 
@@ -439,6 +446,41 @@ def render_header_text(blocks: List[List[HeaderLine]]) -> List[str]:
         for label, value in block:
             lines.append(" ".join(part for part in (label, value) if part))
     return lines
+
+
+def get_delivery_details(order: Dict[str, Any]) -> Dict[str, str]:
+    """Разобранный адрес доставки — для блока `shipping` в keyCRM.
+
+    Chekly отдаёт не только текст, но и справочные идентификаторы Нової Пошти:
+    `_delivery_warehouse_Ref` — UUID отделения, по нему keyCRM привязывает склад
+    и может оформить ТТН без ручного выбора.
+
+    Город и область приходят одной строкой («м. Київ, Київська») — режем по
+    последней запятой.
+    """
+    attrs = note_attributes(order)
+    shipping = order.get("shipping_address") or {}
+
+    city_raw = attrs.get(NA_CITY) or (shipping.get("city") or "").strip()
+    city, separator, region = city_raw.rpartition(",")
+    if not separator:
+        city, region = region, ""
+
+    delivery_type = attrs.get(NA_DELIVERY_TYPE, "")
+    warehouse_ref = attrs.get(NA_WAREHOUSE_REF, "")
+
+    return {
+        "city": city.strip(),
+        "region": region.strip() or (shipping.get("province") or "").strip(),
+        "zip": attrs.get(NA_ZIP) or (shipping.get("zip") or "").strip(),
+        "country": attrs.get(NA_COUNTRY) or (shipping.get("country") or "").strip(),
+        "receive_point": attrs.get(NA_POST_OFFICE) or (shipping.get("address1") or "").strip(),
+        "secondary_line": attrs.get(NA_WAREHOUSE_ADDRESS) or (shipping.get("address2") or "").strip(),
+        "delivery_type": delivery_type,
+        # ref отдаём только для точек выдачи: у курьерской доставки его нет,
+        # а чужой ref сломает привязку склада
+        "warehouse_ref": warehouse_ref if delivery_type in PICKUP_DELIVERY_TYPES else "",
+    }
 
 
 def build_delivery_short(order: Dict[str, Any]) -> str:

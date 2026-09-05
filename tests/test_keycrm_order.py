@@ -1,8 +1,10 @@
 # tests/test_keycrm_order.py
 """Создание замовлення в keyCRM: покупець і отримувач."""
+import json as json_module
 from types import SimpleNamespace
 
 import pytest
+import requests
 
 from app.services import keycrm_service as crm
 from app.services.order_fields import get_order_contact
@@ -10,31 +12,36 @@ from tests.fixtures.chekly_orders import order
 
 
 class _Response:
-    is_redirect = False
-    ok = True
-    status_code = 200
-    reason = "OK"
-    headers: dict = {}
-    text = ""
-
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200):
         self._payload = payload
+        self.status_code = status_code
+        self.ok = status_code < 400
+        self.reason = "OK" if self.ok else "Error"
+        self.text = json_module.dumps(payload)
 
     def raise_for_status(self):
-        return None
+        if not self.ok:
+            raise requests.HTTPError(f"{self.status_code}", response=self)
 
     def json(self):
         return self._payload
 
 
 class _SessionStub:
-    """Подменяет requests.Session и запоминает, что ушло в keyCRM."""
+    """Подменяет requests.Session и запоминает, что ушло в keyCRM.
 
-    def __init__(self):
+    `failures` — коды ответа для первых попыток, дальше отвечает успехом.
+    """
+
+    def __init__(self, failures=()):
         self.post_calls = []
+        self.failures = list(failures)
 
     def post(self, url, json=None, timeout=None, allow_redirects=True):
         self.post_calls.append((url, json or {}))
+        if self.failures:
+            status = self.failures.pop(0)
+            return _Response({"message": "нема"}, status_code=status)
         return _Response({"id": 1000})
 
 
@@ -45,14 +52,18 @@ def session(monkeypatch):
     return stub
 
 
-def test_crm_order_sends_customer_as_buyer_and_recipient_separately(session):
-    raw = order("PAID_DIFFERENT_PEOPLE")
+def _create(fixture, order_number="4582"):
+    raw = order(fixture)
     first_name, last_name, phone = get_order_contact(raw)
-    crm.create_crm_order(SimpleNamespace(
-        id=1, order_number="4582", comment=None, raw_json=raw,
+    return crm.create_crm_order(SimpleNamespace(
+        id=1, order_number=order_number, comment=None, raw_json=raw,
         customer_first_name=first_name, customer_last_name=last_name,
         customer_phone_e164=phone,
     ))
+
+
+def test_crm_order_sends_customer_as_buyer(session):
+    _create("PAID_DIFFERENT_PEOPLE")
 
     _, body = session.post_calls[0]
     assert body["buyer"] == {
@@ -60,22 +71,76 @@ def test_crm_order_sends_customer_as_buyer_and_recipient_separately(session):
         "phone": "+380931112255",
         "email": "buyer@example.com",
     }
-    assert body["shipping"] == {
-        "shipping_service": "Нова Пошта",
-        "recipient_full_name": "Тестовий Отримувач",
-        "recipient_phone": "+380931112244",
-    }
 
 
-def test_crm_order_has_no_shipping_block_for_a_single_person(session):
-    raw = order("PARTIAL_SAME_PERSON")
-    first_name, last_name, phone = get_order_contact(raw)
-    crm.create_crm_order(SimpleNamespace(
-        id=1, order_number="4580", comment=None, raw_json=raw,
-        customer_first_name=first_name, customer_last_name=last_name,
-        customer_phone_e164=phone,
-    ))
+def test_recipient_goes_separately_when_it_is_another_person(session):
+    _create("PAID_DIFFERENT_PEOPLE")
 
-    _, body = session.post_calls[0]
-    assert "shipping" not in body
-    assert body["buyer"]["full_name"] == "Олена Тестова"
+    shipping = session.post_calls[0][1]["shipping"]
+    assert shipping["recipient_full_name"] == "Тестовий Отримувач"
+    assert shipping["recipient_phone"] == "+380931112244"
+
+
+# --- адреса доставки --------------------------------------------------------
+
+def test_shipping_binds_the_nova_poshta_warehouse(session):
+    _create("PARTIAL_SAME_PERSON", "4580")
+
+    shipping = session.post_calls[0][1]["shipping"]
+    assert shipping["delivery_service_id"] == crm.KEYCRM_DELIVERY_SERVICE_ID == 2
+    assert shipping["warehouse_ref"] == "1ec09d48-e1c2-11e3-8c4a-0050568002cf"
+    assert shipping["shipping_address_city"] == "м. Одеса"
+    assert shipping["shipping_address_region"] == "Одеська"
+    assert shipping["shipping_address_zip"] == "65049"
+    assert shipping["shipping_receive_point"].startswith("Відділення №18")
+
+
+def test_address_goes_even_when_customer_is_the_recipient(session):
+    """Раньше блок shipping уходил только при разных людях — теперь всегда."""
+    _create("PARTIAL_SAME_PERSON", "4580")
+
+    shipping = session.post_calls[0][1]["shipping"]
+    assert "recipient_full_name" not in shipping
+    assert shipping["shipping_address_city"] == "м. Одеса"
+
+
+def test_falls_back_to_plain_address_when_warehouse_is_rejected(session):
+    """keyCRM отверг привязку склада — замовлення всё равно создаётся."""
+    session.failures = [422]
+
+    result = _create("PARTIAL_SAME_PERSON", "4580")
+
+    assert result["id"] == 1000
+    assert len(session.post_calls) == 2
+    assert "warehouse_ref" in session.post_calls[0][1]["shipping"]
+    assert "warehouse_ref" not in session.post_calls[1][1]["shipping"]
+    assert session.post_calls[1][1]["shipping"]["shipping_address_city"] == "м. Одеса"
+
+
+def test_falls_back_to_no_shipping_at_all(session):
+    session.failures = [422, 422]
+
+    result = _create("PARTIAL_SAME_PERSON", "4580")
+
+    assert result["id"] == 1000
+    assert len(session.post_calls) == 3
+    assert "shipping" not in session.post_calls[2][1]
+
+
+def test_server_errors_are_not_retried(session):
+    """При 5xx замовлення могло створитись — повтор зробив би дубль."""
+    session.failures = [500, 500, 500]
+
+    with pytest.raises(requests.HTTPError):
+        _create("PARTIAL_SAME_PERSON", "4580")
+
+    assert len(session.post_calls) == 1
+
+
+def test_legacy_orders_send_plain_address(session):
+    _create("LEGACY_ORDER", "3475")
+
+    shipping = session.post_calls[0][1]["shipping"]
+    assert "warehouse_ref" not in shipping
+    assert shipping["shipping_service"] == "Нова Пошта"
+    assert shipping["shipping_address_city"] == "Одеса"
